@@ -1,0 +1,4 @@
+# Every text file is checked out with LF line endings, whatever the platform:
+# the shell scripts don't run with CRLF, and a commit's files are then the
+# same bytes on every machine that builds it.
+* text=auto eol=lf

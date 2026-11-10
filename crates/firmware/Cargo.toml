@@ -1,0 +1,21 @@
+[package]
+name = "ambrosia-firmware"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Ambrosia firmware image for the vmapple machine"
+license.workspace = true
+readme = "README.md"
+publish.workspace = true
+
+[[bin]]
+name = "ambrosia"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+ambrosia = { path = "../ambrosia" }
+
+[lints]
+workspace = true

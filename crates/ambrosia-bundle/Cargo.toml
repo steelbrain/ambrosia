@@ -1,0 +1,21 @@
+[package]
+name = "ambrosia-bundle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Builds, checks and lists Ambrosia's configuration bundles"
+license.workspace = true
+readme = "README.md"
+publish.workspace = true
+
+[[bin]]
+name = "ambrosia-bundle"
+path = "src/main.rs"
+
+[dependencies]
+# The firmware's own readers: the bundle, config.plist, kexts and driver
+# modules, so the tool accepts what the firmware accepts.
+ambrosia = { path = "../ambrosia" }
+
+[lints]
+workspace = true

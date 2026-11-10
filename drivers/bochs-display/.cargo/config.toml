@@ -1,0 +1,12 @@
+# A driver module is an ELF static PIE for aarch64 (docs/graphics-drivers.md):
+# position-independent code, linked with -pie, whose entry point is the
+# module's entry function.
+[build]
+target = "aarch64-unknown-none"
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=pie",
+    "-C", "link-arg=-pie",
+    "-C", "link-arg=--entry=driver_entry",
+]

@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/ambrosia", "crates/ambrosia-bundle", "crates/firmware"]
+# The crates a bare `cargo build` or `cargo test` here builds for the host.
+# The firmware builds only for its bare-metal target, from its own directory
+# (`make image`).
+default-members = ["crates/ambrosia", "crates/ambrosia-bundle"]
+
+# The fields every crate here shares. drivers/bochs-display is a workspace of
+# its own and repeats them.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-2.0-or-later OR LGPL-3.0-or-later"
+publish = false
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unsafe_op_in_unsafe_fn = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+cast_lossless = "warn"
+missing_safety_doc = "deny"
+semicolon_if_nothing_returned = "warn"
+undocumented_unsafe_blocks = "deny"
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = true

@@ -1,0 +1,25 @@
+[package]
+name = "ambrosia"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The boot, apart from the machine: disks, boot objects, the kernel collection and the device tree"
+license.workspace = true
+readme = "README.md"
+publish.workspace = true
+
+[dependencies]
+# LZFSE, which the kernel collection's IM4P payload is packed with. Pure Rust,
+# no_std and forbids unsafe code.
+compcol = { version = "0.7.8", default-features = false, features = ["alloc", "lzfse"] }
+# The early console's glyphs: font8x8's, whose bitmaps are in the public
+# domain; the crate is MIT. Without its default features it is no_std and
+# gives the bitmaps as tables.
+font8x8 = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+# SHA-256, with which the disk tests check the files they read.
+sha2 = "0.10"
+
+[lints]
+workspace = true

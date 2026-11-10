@@ -1,0 +1,11 @@
+# The image builds from this directory, so that this file applies; `make image`
+# runs it here. It targets bare-metal arm64 and links with link.ld, which
+# places the image at the machine's firmware region. A build script could pass
+# the linker script too, but cargo hashes a build script's host into the
+# crate's symbols, and the image would then differ between kinds of build
+# machine. The path is from the workspace root, where cargo runs rustc.
+[build]
+target = "aarch64-unknown-none"
+
+[target.aarch64-unknown-none]
+rustflags = ["-C", "link-arg=-Tcrates/firmware/link.ld"]

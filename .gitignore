@@ -1,0 +1,4 @@
+# Build output, from cargo and make.
+target/
+# Releases, from `make release`. They are published, not committed.
+/dist/

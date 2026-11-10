@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: make ci on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two kinds of build machine, so that the reproducible job can check
+        # that they build the same release.
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_FLAGS: --locked
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain rust-toolchain.toml names
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal \
+            --component clippy,llvm-tools,rustfmt --target aarch64-unknown-none
+
+      # Lints, tests and builds, writes the release into dist/, then rebuilds
+      # it in a temporary worktree and compares the bytes.
+      - run: make ci
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ambrosia-${{ matrix.os }}
+          path: dist/
+          if-no-files-found: error
+
+      - if: matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bochs-display
+          path: |
+            target/bochs-display.elf
+            target/bochs-display.cpio
+
+  reproducible:
+    name: Compare the Linux and macOS releases
+    needs: ci
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ambrosia-*
+          path: releases
+
+      - name: Check that both machines built the same release
+        run: |
+          diff -r releases/ambrosia-ubuntu-24.04 releases/ambrosia-macos-15
+          cat releases/ambrosia-ubuntu-24.04/SHA256SUMS

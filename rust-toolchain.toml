@@ -1,0 +1,7 @@
+# The exact toolchain, so that a commit builds the same image everywhere
+# (`make verify-release`).
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "llvm-tools", "rustfmt"]
+targets = ["aarch64-unknown-none"]
