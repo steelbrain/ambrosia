@@ -117,7 +117,16 @@ it builds the release on Linux and on macOS and compares the two.
 
 It refuses to run while the checkout has changes or untracked files, since
 either could change the build. `DIST=dir` writes the release somewhere
-else. The files are published with the release; `dist/` is not committed.
+else. `dist/` is not committed.
+
+A release page attaches the release as one zip, `ambrosia-<version>.zip`,
+which `scripts/internal/release-zip.sh` makes from a clean checkout. The
+script runs `make release` and `make verify-release`, then writes
+`dist/ambrosia-<version>.zip`, whose folder `ambrosia-<version>/` holds the
+four files above and Ambrosia's own license texts, `LICENSE` and
+`LICENSES/`. Like the image, the zip is the same bytes on any host: its
+files are stored uncompressed, in a fixed order, with fixed modes and the
+time of the release's commit. The script needs `python3`.
 
 `make verify-release` checks a release, built here or anywhere else:
 `SHA256SUMS` against the image, then the image and the notices against a
@@ -125,5 +134,25 @@ fresh build of `COMMIT`, made in a temporary worktree. `DIST=dir` checks a
 release in another directory, such as one downloaded from a release page.
 It says which file differs when one does.
 
-CI (`.github/workflows/ci.yml`) runs `make ci` on Linux and on macOS, with
-`--locked`.
+CI (`.github/workflows/ci.yml`) runs `make ci` and then
+`scripts/internal/release-zip.sh` on Linux and on macOS, with `--locked`,
+and checks that both machines built the same release and the same zip.
+
+## Publishing a release
+
+A pushed tag publishes a release. To release version X.Y.Z:
+
+1. Set `version` under `[workspace.package]` in `Cargo.toml` to X.Y.Z, and
+   rename `CHANGELOG.md`'s `## Unreleased` heading to `## X.Y.Z`, adding a
+   title after ` - ` if you like. Commit both.
+2. Tag the commit `vX.Y.Z` and push the tag.
+
+CI then runs as on every push, and once both machines have built the same
+zip, its release job creates the tag's GitHub release: titled
+`Ambrosia X.Y.Z`, with the changelog's section for X.Y.Z as its notes and
+`ambrosia-X.Y.Z.zip` attached. It refuses a tag that isn't `v` and
+`Cargo.toml`'s version. If the release exists already, it replaces only the
+zip.
+
+`scripts/internal/release-zip.sh`, run from a clean checkout of the tag,
+builds the same zip on your own machine, byte for byte.

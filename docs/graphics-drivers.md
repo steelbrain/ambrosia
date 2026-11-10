@@ -269,12 +269,12 @@ AMBROSIA_TEST_DRIVER=$PWD/target/bochs-display.elf \
 A 26.6.2 guest's log, with the guest's identifiers replaced:
 
 ```text
-ambrosia: Ambrosia 0.1.0
+ambrosia: Ambrosia 0.1.1
 ambrosia: 4 CPUs, RAM 0x100000000-0x300000000, ECID 0x<ECID>
 ambrosia: configuration: 14748 bytes, 0 kexts, 0 patches, graphics driver Drivers/bochs-display.elf
 ambrosia: graphics driver Drivers/bochs-display.elf: 0x32280 bytes at 0x140010000
 ambrosia: bochs-display at 00:05.0: 1024x768, framebuffer 0x50000000, registers 0x51000000
-ambrosia: Ambrosia 0.1.0: early console, 1024x768 at 0x50000000
+ambrosia: Ambrosia 0.1.1: early console, 1024x768 at 0x50000000
 ambrosia: macOS <volume group UUID>, boot objects <manifest hash>
 ambrosia: NVRAM bank 1 of 2, generation 176
 ambrosia: kernel collection: 219 entries, 0x4ac8000 bytes at 0x1006f0000

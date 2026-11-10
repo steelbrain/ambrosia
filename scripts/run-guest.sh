@@ -28,7 +28,7 @@ EOF
 }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-ecid= firmware=$root/target/ambrosia.bin bundle= qemu=${QEMU:-qemu-system-aarch64}
+ecid='' firmware=$root/target/ambrosia.bin bundle='' qemu=${QEMU:-qemu-system-aarch64}
 accel=hvf memory=8G cpus=4 port=10022 serial=mon:stdio
 
 while getopts e:f:b:q:tm:c:p:s:h opt; do

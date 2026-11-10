@@ -9,7 +9,7 @@ default-members = ["crates/ambrosia", "crates/ambrosia-bundle"]
 # The fields every crate here shares. drivers/bochs-display is a workspace of
 # its own and repeats them.
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.99"
 license = "GPL-2.0-or-later OR LGPL-3.0-or-later"

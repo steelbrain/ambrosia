@@ -32,6 +32,10 @@ jobs:
       # it in a temporary worktree and compares the bytes.
       - run: make ci
 
+      # The zip a release page attaches, dist/ambrosia-<version>.zip, made as
+      # it is made anywhere; the reproducible job compares it too.
+      - run: scripts/internal/release-zip.sh
+
       - uses: actions/upload-artifact@v4
         with:
           name: ambrosia-${{ matrix.os }}
@@ -60,3 +64,55 @@ jobs:
         run: |
           diff -r releases/ambrosia-ubuntu-24.04 releases/ambrosia-macos-15
           cat releases/ambrosia-ubuntu-24.04/SHA256SUMS
+
+  release:
+    name: Publish the release
+    # A pushed tag v<version> publishes the zip both machines built the same.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: reproducible
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ambrosia-ubuntu-24.04
+          path: dist
+
+      # The tag must be v and Cargo.toml's version, and the zip a release of
+      # the tag's commit. The release is titled "Ambrosia <version>", its
+      # notes are CHANGELOG.md's section for the version, without the blank
+      # lines around it, and the zip is attached. A release that exists
+      # already gets the new zip and is otherwise left as it is.
+      - name: Create the tag's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::the tag $TAG is not v$version, for Cargo.toml's version"
+            exit 1
+          fi
+          if [ "$(cat dist/COMMIT)" != "$GITHUB_SHA" ]; then
+            echo "::error::dist/ holds a release of $(cat dist/COMMIT), not of $GITHUB_SHA"
+            exit 1
+          fi
+          zip=dist/ambrosia-$version.zip
+          notes=$RUNNER_TEMP/notes.md
+          awk -v v="$version" '
+              /^## / { on = ($0 == "## " v || index($0, "## " v " - ") == 1); next }
+              on' CHANGELOG.md |
+            sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' > "$notes"
+          if [ ! -s "$notes" ]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$zip" --clobber
+          else
+            gh release create "$TAG" "$zip" --verify-tag \
+              --title "Ambrosia $version" --notes-file "$notes"
+          fi

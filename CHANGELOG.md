@@ -5,6 +5,18 @@ Every release of Ambrosia, newest first. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 release's image is published with the release.
 
+## 0.1.1 - Automatic Release by CI
+
+- CI builds and publishes each release. Pushing a tag `vX.Y.Z` builds the
+  release on Linux and on macOS, checks that both machines built the same
+  bytes, and creates the tag's GitHub release with this changelog's section
+  as its notes and `ambrosia-X.Y.Z.zip` attached.
+- Each release is one zip, `ambrosia-X.Y.Z.zip`, holding the image, its
+  `SHA256SUMS`, the third-party license notices, the commit it was built
+  from and Ambrosia's license texts. `scripts/internal/release-zip.sh`
+  builds it, the same bytes on any host, so a downloaded zip can be checked
+  by rebuilding it from its tag.
+
 ## 0.1.0 - Initial release
 
 - Boots arm64 macOS on QEMU's `vmapple` machine in place of AVPBooter, with

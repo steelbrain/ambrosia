@@ -59,8 +59,8 @@ What it doesn't do:
 
 ## Quick start
 
-Build the image, or download `ambrosia.bin` from a release and check it
-against the release's `SHA256SUMS`:
+Build the image, or download a release's `ambrosia-<version>.zip`, which
+holds `ambrosia.bin` and its `SHA256SUMS` to check it against:
 
 ```sh
 make                       # writes target/ambrosia.bin
@@ -147,7 +147,7 @@ works the way it does.
 | `drivers/bochs-display` | The example graphics driver module. |
 | `examples/hello-kext` | A minimal kext to inject, with its `config.plist`. |
 | `scripts/run-guest.sh` | Boots a guest with Ambrosia. |
-| `scripts/internal` | Maintainer tools, such as the release's license notices. |
+| `scripts/internal` | Maintainer tools: a release's license notices and its zip. |
 | `docs` | How to build, run, configure and extend Ambrosia, and how it works. |
 
 ## Building and testing

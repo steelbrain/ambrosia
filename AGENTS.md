@@ -36,7 +36,7 @@ tree or the memory layout is built: each item there is a boot that hung.
 | `drivers/bochs-display` | The example graphics driver module, a workspace of its own. |
 | `examples/hello-kext` | A minimal kext to inject. |
 | `scripts/run-guest.sh` | Boots a guest. |
-| `scripts/internal` | Maintainer tools; `third-party.sh` writes a release's license notices. |
+| `scripts/internal` | Maintainer tools: `third-party.sh` writes a release's license notices, and `release-zip.sh` the zip a release page attaches, which CI publishes when a tag is pushed. |
 | `docs` | User docs at the top, task guides in `how-to/`, design in `internals/`. |
 
 Everything that knows the machine, its addresses and its config block, is

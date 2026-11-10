@@ -9,7 +9,7 @@ You need:
 - a QEMU whose `vmapple` machine gives what [the machine](machine.md)
   lists, built with HVF on an Apple silicon Mac or with TCG on any host;
 - the image: `target/ambrosia.bin` from `make` ([building](building.md)),
-  or `ambrosia.bin` from a release;
+  or `ambrosia.bin` from a release's zip;
 - the guest's files: its disk image, `disk.img`, and its auxiliary
   storage, `aux.img`;
 - the guest's ECID.
