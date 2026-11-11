@@ -5,8 +5,30 @@ Every release of Ambrosia, newest first. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 release's image is published with the release.
 
-## Unreleased
+## 0.1.2 - macOS 27.2.1
 
+- macOS 27.2.1 (26B131) guests boot under HVF and under TCG with SIP
+  enabled, and with kexts added.
+- The boot arguments are written in both of XNU's layouts. The 12.6 and
+  13.6 kernels read 736 bytes. The kernels from 14.6.1 on read 1152 bytes,
+  with a 1024-byte command line, so their `bootFlags` and `memSizeActual`
+  lie at 1136 and 1144. Ambrosia wrote only the shorter layout, and the
+  27.2.1 kernel, which compares `memSizeActual` with `/chosen/dram-size`,
+  read 0 and panicked with `inconsistent DRAM size reported by iBoot`.
+  `memSizeActual` is now all of RAM, the value `/chosen/dram-size` has.
+- A boot directory without `System/Library/Caches/apticket.der` boots:
+  Ambrosia takes the boot manifest from the `apticket.*.im4m` in
+  `/<group>/restore/` whose SHA-384 is the boot directory's name, and logs
+  which file it read. The Preboot volume keeps a copy of the manifest
+  there, and a disk built without macOS's installer, such as one macOS
+  27.2.1 (26B131) guest image, can have only that copy.
+- A `Kernel` > `Patch` on `com.apple.kernel` applies. It stopped the boot
+  with
+  `the kernel collection can't be read: its entry point is in no segment`:
+  reading the kernel member to patch it checked the member's own
+  `LC_UNIXTHREAD`, whose address is in none of its segments in the
+  collections of macOS 14.6.1, 15.6.1, 26.6.2 and 27.0.1. Only the
+  collection's entry point is checked now.
 - The graphics driver interface's rule for device registers is the one the
   CPU has: each access one load or store of one general-purpose register,
   with no writeback, which the CPU reports to the hypervisor with a
@@ -16,28 +38,6 @@ release's image is published with the release.
   boot in the module. The example module makes its accesses in inline
   assembly, in `src/mmio.rs`, the firmware makes its own the same way, and
   the docs show it in C.
-- macOS 27.2.1 (26B131) guests boot under HVF and under TCG with SIP
-  enabled, and with kexts added.
-- A boot directory without `System/Library/Caches/apticket.der` boots:
-  Ambrosia takes the boot manifest from the `apticket.*.im4m` in
-  `/<group>/restore/` whose SHA-384 is the boot directory's name, and logs
-  which file it read. The Preboot volume keeps a copy of the manifest
-  there, and a disk built without macOS's installer, such as one macOS
-  27.2.1 (26B131) guest image, can have only that copy.
-- The boot arguments are written in both of XNU's layouts. The 12.6 and
-  13.6 kernels read 736 bytes. The kernels from 14.6.1 on read 1152 bytes,
-  with a 1024-byte command line, so their `bootFlags` and `memSizeActual`
-  lie at 1136 and 1144. Ambrosia wrote only the shorter layout, and the
-  27.2.1 kernel, which compares `memSizeActual` with `/chosen/dram-size`,
-  read 0 and panicked with `inconsistent DRAM size reported by iBoot`.
-  `memSizeActual` is now all of RAM, the value `/chosen/dram-size` has.
-- A `Kernel` > `Patch` on `com.apple.kernel` applies. It stopped the boot
-  with
-  `the kernel collection can't be read: its entry point is in no segment`:
-  reading the kernel member to patch it checked the member's own
-  `LC_UNIXTHREAD`, whose address is in none of its segments in the
-  collections of macOS 14.6.1, 15.6.1, 26.6.2 and 27.0.1. Only the
-  collection's entry point is checked now.
 
 ## 0.1.1 - Automatic Release by CI
 

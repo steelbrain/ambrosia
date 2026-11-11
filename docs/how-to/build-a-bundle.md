@@ -160,10 +160,10 @@ placing the kext, before it enters the kernel. The addresses change from
 boot to boot:
 
 ```text
-ambrosia: Ambrosia 0.1.1
+ambrosia: Ambrosia 0.1.2
 ambrosia: configuration: 116344 bytes, 1 kexts, 0 patches, graphics driver Drivers/bochs-display.elf
 ambrosia: graphics driver Drivers/bochs-display.elf: 0x322f0 bytes at 0x140010000
-ambrosia: Ambrosia 0.1.1: early console, 1024x768 at 0x50000000
+ambrosia: Ambrosia 0.1.2: early console, 1024x768 at 0x50000000
 ...
 ambrosia: AuxKC: 131072 bytes, 1 kext(s), 318 fixups, BootKCID <data>
 ambrosia: AuxKC: kext ai.aneesiqbal.ambrosia.example.hello at 0x4000 (slid 0xfffffe001537c000), code 0x10000, kmod 0x10000

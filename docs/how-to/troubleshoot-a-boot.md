@@ -10,7 +10,7 @@ stops the boot, and what to look at when a guest doesn't come up.
 A plain 27.0.1 guest's log, with the guest's identifiers replaced:
 
 ```text
-ambrosia: Ambrosia 0.1.1
+ambrosia: Ambrosia 0.1.2
 ambrosia: 4 CPUs, RAM 0x100000000-0x300000000, ECID 0x<ECID>
 ambrosia: macOS <volume group UUID>, boot objects <manifest hash>
 ambrosia: NVRAM bank 1 of 2, generation 260

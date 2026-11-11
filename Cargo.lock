@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ambrosia"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "compcol",
  "font8x8",
@@ -13,14 +13,14 @@ dependencies = [
 
 [[package]]
 name = "ambrosia-bundle"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ambrosia",
 ]
 
 [[package]]
 name = "ambrosia-firmware"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ambrosia",
 ]

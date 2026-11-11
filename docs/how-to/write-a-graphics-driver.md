@@ -129,7 +129,7 @@ the early console's first line:
 
 ```text
 ambrosia: graphics driver Drivers/my-display.elf: <size> bytes at <base>
-ambrosia: Ambrosia 0.1.1: early console, 1024x768 at 0x50000000
+ambrosia: Ambrosia 0.1.2: early console, 1024x768 at 0x50000000
 ```
 
 With `-display none`, QMP's `screendump` shows the screen.
