@@ -7,6 +7,13 @@ release's image is published with the release.
 
 ## Unreleased
 
+- The boot arguments are written in both of XNU's layouts. The 12.6 and
+  13.6 kernels read 736 bytes. The kernels from 14.6.1 on read 1152 bytes,
+  with a 1024-byte command line, so their `bootFlags` and `memSizeActual`
+  lie at 1136 and 1144. Ambrosia wrote only the shorter layout, and the
+  27.2.1 kernel, which compares `memSizeActual` with `/chosen/dram-size`,
+  read 0 and panicked with `inconsistent DRAM size reported by iBoot`.
+  `memSizeActual` is now all of RAM, the value `/chosen/dram-size` has.
 - A `Kernel` > `Patch` on `com.apple.kernel` applies. It stopped the boot
   with
   `the kernel collection can't be read: its entry point is in no segment`:

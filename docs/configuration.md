@@ -102,8 +102,10 @@ bochs-display module, which the bundle must hold at
 ### BootArgs
 
 A string: the kernel's command line. The default is empty, and a guest
-needs none. Ambrosia writes it into the boot arguments' 608-byte command
-line field, cut to 607 bytes if longer.
+needs none. Ambrosia writes it into the boot arguments' command line
+field, cut to 607 bytes if longer: the 12.6 and 13.6 kernels' field is 608
+bytes, the later kernels' 1024
+([the boot arguments](boot-process.md#the-boot-arguments)).
 
 For debugging, `serial=3 -v` puts the kernel's log on the UART, after
 Ambrosia's own.

@@ -765,8 +765,9 @@ pub fn prepare(
         machine_type: 0,
         device_tree: virt_base + (dt_at - phys_base),
         device_tree_length: dt_len as u32,
-        boot_flags: 0,
-        mem_size_actual: 0,
+        // All of RAM, the value /chosen/dram-size has (`populate` in
+        // tree.rs), which the kernel checks it against.
+        mem_size_actual: m.ram_size,
     };
     let args_mem = mem.bytes(args_at, PAGE as usize).ok_or(Error::NoRoom)?;
     args_mem.fill(0);

@@ -1,8 +1,23 @@
 //! XNU's arm64 boot arguments, `boot_args` revision 3, version 2, which the
 //! firmware passes in x0 at kernel entry.
+//!
+//! The structure has two layouts, which differ in the length of the command
+//! line and so in where the two fields after it, `bootFlags` and
+//! `memSizeActual`, lie. The 12.6 and 13.6 kernels copy 736 bytes of it,
+//! with a 608-byte command line and the two fields at 720 and 728. The
+//! kernels from 14.6.1 to 27.2.1 copy 1152 bytes, with a 1024-byte command
+//! line and the two fields at 1136 and 1144. [`BootArgs::write`] fills one
+//! block that reads right in both: the command line ends within the shorter
+//! field, the shorter layout's two fields are zero, as they lie inside the
+//! longer layout's command line, and the longer layout's carry the values.
 
-/// The length of the kernel command line field.
+/// The length of the command line field in the shorter layout, which bounds
+/// the command line in both.
 pub const COMMAND_LINE: usize = 608;
+
+/// Where the longer layout keeps `memSizeActual`. Its `bootFlags`, at 1136,
+/// is zero.
+const MEM_SIZE_ACTUAL: usize = 1144;
 
 /// The framebuffer the kernel's early console draws on, if any: XNU's
 /// `Boot_Video`.
@@ -43,19 +58,20 @@ pub struct BootArgs {
     pub device_tree: u64,
     /// The device tree's length in bytes.
     pub device_tree_length: u32,
-    /// The firmware's flags for the kernel, `bootFlags`.
-    pub boot_flags: u64,
-    /// The size of all of RAM, `memSizeActual`; 0 has the kernel take
-    /// `mem_size`.
+    /// The size of all of RAM, `memSizeActual`, which must equal the device
+    /// tree's `/chosen/dram-size`: the 27.2.1 kernel panics where they
+    /// differ. Only the longer layout carries it. The 12.6 and 13.6 kernels
+    /// read 0, which has them take `mem_size`.
     pub mem_size_actual: u64,
 }
 
-/// The bytes [`BootArgs::write`] fills.
-pub const SIZE: usize = 736;
+/// The bytes [`BootArgs::write`] fills, the longer layout's size.
+pub const SIZE: usize = 1152;
 
 impl BootArgs {
-    /// Writes the structure, with `command_line`, into `out`. The command
-    /// line is cut to 607 bytes, to keep its NUL.
+    /// Writes the structure, with `command_line`, into `out`, in both
+    /// layouts at once. The command line is cut to 607 bytes, to keep its
+    /// NUL within the shorter layout's field. `bootFlags` is 0 in both.
     pub fn write(&self, command_line: &str, out: &mut [u8; SIZE]) {
         out.fill(0);
         let mut put = |at: usize, b: &[u8]| out[at..at + b.len()].copy_from_slice(b);
@@ -77,8 +93,9 @@ impl BootArgs {
         put(104, &self.device_tree_length.to_le_bytes());
         let cl = command_line.as_bytes();
         put(108, &cl[..cl.len().min(COMMAND_LINE - 1)]);
-        put(720, &self.boot_flags.to_le_bytes());
-        put(728, &self.mem_size_actual.to_le_bytes());
+        // The shorter layout's bootFlags and memSizeActual, at 720 and 728,
+        // stay zero: in the longer layout they are command line, past its NUL.
+        put(MEM_SIZE_ACTUAL, &self.mem_size_actual.to_le_bytes());
     }
 }
 
@@ -95,6 +112,7 @@ mod tests {
             top_of_kernel_data: 0x783a8000,
             device_tree: 0xfffffe00_194a8000,
             device_tree_length: 0x8c000,
+            mem_size_actual: 0x2_0000_0000,
             ..Default::default()
         };
         let mut b = [0u8; SIZE];
@@ -110,5 +128,26 @@ mod tests {
             0x8c000
         );
         assert_eq!(&b[108..111], b"-v\0");
+        // The shorter layout: bootFlags and memSizeActual are 0.
+        assert_eq!((u64_at(720), u64_at(728)), (0, 0));
+        // The longer layout: bootFlags is 0, memSizeActual all of RAM, and
+        // its command line is zero past the NUL.
+        assert_eq!((u64_at(1136), u64_at(1144)), (0, 0x2_0000_0000));
+        assert!(b[111..1136].iter().all(|&x| x == 0));
+    }
+
+    /// A command line too long for the shorter layout's field is cut to keep
+    /// its NUL there, so neither layout's fields after it are touched.
+    #[test]
+    fn long_command_line() {
+        let a = BootArgs {
+            mem_size_actual: 7,
+            ..Default::default()
+        };
+        let mut b = [0u8; SIZE];
+        a.write(&"x".repeat(1000), &mut b);
+        assert!(b[108..108 + 607].iter().all(|&x| x == b'x'));
+        assert!(b[108 + 607..1144].iter().all(|&x| x == 0));
+        assert_eq!(u64::from_le_bytes(b[1144..].try_into().unwrap()), 7);
     }
 }

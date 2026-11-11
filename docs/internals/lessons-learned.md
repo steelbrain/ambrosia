@@ -90,6 +90,16 @@ discriminators are taken from the most-base class that has the slot
 
 ## Memory layout
 
+**The boot arguments have two layouts, and 27.2.1 checks one field.** The
+command line in XNU's `boot_args` is 608 bytes in the 12.6 and 13.6 kernels
+and 1024 bytes in those from 14.6.1 on, which moves `bootFlags` and
+`memSizeActual` from 720 and 728 to 1136 and 1144. Up to 27.0.1, a kernel
+takes a `memSizeActual` of 0 to mean `memSize`, so a block in the shorter
+layout booted them all. The 27.2.1 kernel compares `memSizeActual` with
+`/chosen/dram-size` in `arm_init`, before its console starts, and panics
+where they differ. So Ambrosia writes one block that reads right in both
+layouts, with `memSizeActual` all of RAM (`bootargs.rs`).
+
 **`virtBase - physBase` must be a multiple of 32 MiB.** The kernel maps
 itself in 32 MiB blocks and builds its mapping as if this holds. When it
 doesn't, the kernel's first exception loops in a vector that isn't there.

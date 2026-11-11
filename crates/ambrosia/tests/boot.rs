@@ -106,7 +106,10 @@ fn prepares_a_guest() {
     }
 
     // The boot arguments point at a tree that parses and says what was placed.
-    let args = ram.bytes(h.boot_args, 0x70).unwrap().to_vec();
+    let args = ram
+        .bytes(h.boot_args, ambrosia::bootargs::SIZE)
+        .unwrap()
+        .to_vec();
     let u64_at = |at: usize| u64::from_le_bytes(args[at..at + 8].try_into().unwrap());
     let (virt, phys) = (u64_at(8), u64_at(16));
     assert_eq!(virt.wrapping_sub(phys) % (32 << 20), 0);
@@ -114,6 +117,10 @@ fn prepares_a_guest() {
     let dt_len = u32::from_le_bytes(args[0x68..0x6c].try_into().unwrap()) as usize;
     let (tree, _) = Node::parse(ram.bytes(dt_pa, dt_len).unwrap()).unwrap();
     let chosen = tree.find("chosen").unwrap();
+    // The longer layout's memSizeActual is /chosen/dram-size, which the
+    // kernel checks it against; the shorter layout's is 0.
+    let dram_size = u64::from_le_bytes(chosen.get("dram-size").unwrap().try_into().unwrap());
+    assert_eq!((u64_at(1144), u64_at(728)), (dram_size, 0));
     assert_eq!(chosen.get_u32("secure-boot"), Some(1));
     assert!(
         chosen

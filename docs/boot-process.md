@@ -466,8 +466,12 @@ The tree is written out with zeroes to the end of its last 16 KiB page.
 
 ## The boot arguments
 
-XNU's `boot_args`, revision 3, version 2, 736 bytes at the start of their
-16 KiB page ([`bootargs.rs`](../crates/ambrosia/src/bootargs.rs)):
+XNU's `boot_args`, revision 3, version 2, at the start of their 16 KiB page
+([`bootargs.rs`](../crates/ambrosia/src/bootargs.rs)). The structure has
+two layouts. The 12.6 and 13.6 kernels read 736 bytes, with a 608-byte
+command line. The kernels from 14.6.1 to 27.2.1 read 1152 bytes, with a
+1024-byte command line, and the two fields after it lie 416 bytes further
+on. Ambrosia writes one 1152-byte block that reads right in both:
 
 | Offset | Field | Value |
 |---|---|---|
@@ -481,9 +485,14 @@ XNU's `boot_args`, revision 3, version 2, 736 bytes at the start of their
 | 88 | `machineType` | 0 |
 | 96 | `deviceTreeP` | The device tree's kernel virtual address. |
 | 104 | `deviceTreeLength` | Its length, 32 bits. |
-| 108 | `CommandLine` | `BootArgs`, 608 bytes with its NUL. |
-| 720 | `bootFlags` | 0 |
-| 728 | `memSizeActual` | 0 |
+| 108 | `CommandLine` | `BootArgs`, cut to 607 bytes so that its NUL ends within the shorter field. |
+| 720 | `bootFlags`, 736-byte layout | 0 |
+| 728 | `memSizeActual`, 736-byte layout | 0, which has the kernel take `memSize`. |
+| 1136 | `bootFlags`, 1152-byte layout | 0 |
+| 1144 | `memSizeActual`, 1152-byte layout | All of RAM, as `/chosen/dram-size` gives it. The 27.2.1 kernel panics with `inconsistent DRAM size reported by iBoot` where the two differ. |
+
+The shorter layout's two fields lie inside the longer layout's command
+line, past its NUL, so they stay zero.
 
 `Video` is `v_baseAddr`, `v_display`, `v_rowBytes`, `v_width`, `v_height`
 and `v_depth`. Bits 16 to 23 of `v_depth` hold the scale less 1. Without a
