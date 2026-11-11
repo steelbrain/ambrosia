@@ -134,11 +134,20 @@ fn prepares_a_guest() {
     );
     assert!(tree.find("arm-io/avp-rtc").is_some());
     assert!(tree.find("arm-io/pl031-rtc").is_none());
-    // The guest's NVRAM has no RTC offset, so it gets the one for zero, and
-    // the bank stays valid for the kernel.
+    // The kernel gets the guest's current NVRAM bank. A guest that has never
+    // run with avp-rtc has no RTC offset there, and gets the one for zero; a
+    // guest that has keeps its own. Either way the bank stays valid.
+    let bank = ambrosia::nvram::current(&nvram, 2).unwrap().data.to_vec();
+    let mut want = bank.clone();
+    let added = ambrosia::nvram::add_if_absent(&mut want, b"com.apple.System.rtc-offset", b"0x1");
     let proxy = chosen.get("nvram-proxy-data").unwrap();
-    let entry = b"com.apple.System.rtc-offset=0x1\0";
-    assert!(proxy.windows(entry.len()).any(|w| w == entry));
+    assert!(proxy == &want[..]);
+    let name = b"com.apple.System.rtc-offset=";
+    assert!(proxy.windows(name.len()).any(|w| w == name));
+    assert_eq!(
+        lines.contains(&"NVRAM has no RTC offset: set it to zero".to_string()),
+        added
+    );
     assert!(ambrosia::nvram::current(proxy, 1).is_some());
     assert!(tree.find("filesystems").is_none());
     assert_eq!(tree.find("cpus").unwrap().children.len(), 4);
@@ -197,5 +206,5 @@ fn prepares_a_guest() {
         .unwrap()
         .get("nvram-proxy-data")
         .unwrap();
-    assert!(!proxy.windows(entry.len()).any(|w| w == entry));
+    assert!(proxy == &bank[..]);
 }
