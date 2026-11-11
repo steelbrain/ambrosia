@@ -576,7 +576,8 @@ pub fn prepare(
             .vmaddr
             .checked_sub(lo)
             .ok_or(Error::Kernel(macho::Error::Truncated))?;
-        let entry = Header::parse(kc.get(at as usize..).unwrap_or(&[])).map_err(Error::Kernel)?;
+        let entry =
+            Header::parse_member(kc.get(at as usize..).unwrap_or(&[])).map_err(Error::Kernel)?;
         let mut done = 0;
         for s in entry.segments.iter().filter(|s| s.name != "__LINKEDIT") {
             let limit = match p.count {

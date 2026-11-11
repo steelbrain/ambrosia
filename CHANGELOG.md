@@ -5,6 +5,16 @@ Every release of Ambrosia, newest first. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 release's image is published with the release.
 
+## Unreleased
+
+- A `Kernel` > `Patch` on `com.apple.kernel` applies. It stopped the boot
+  with
+  `the kernel collection can't be read: its entry point is in no segment`:
+  reading the kernel member to patch it checked the member's own
+  `LC_UNIXTHREAD`, whose address is in none of its segments in the
+  collections of macOS 14.6.1, 15.6.1, 26.6.2 and 27.0.1. Only the
+  collection's entry point is checked now.
+
 ## 0.1.1 - Automatic Release by CI
 
 - CI builds and publishes each release. Pushing a tag `vX.Y.Z` builds the

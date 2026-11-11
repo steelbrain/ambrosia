@@ -110,8 +110,32 @@ fn cstr(d: &[u8]) -> String {
 }
 
 impl Header {
-    /// Parses the header and load commands at the start of `d`.
+    /// Parses the header and load commands at the start of `d`, the file the
+    /// firmware runs: its entry point, if it has one, must land in one of its
+    /// segments.
     pub fn parse(d: &[u8]) -> Result<Header, Error> {
+        let h = Header::parse_member(d)?;
+        // The firmware turns the entry point into a physical address relative
+        // to the lowest segment, and runs the kernel there.
+        if let Some(e) = h.entry {
+            let in_segment = h
+                .segments
+                .iter()
+                .any(|s| s.vmaddr <= e && e - s.vmaddr < s.vmsize);
+            if !in_segment {
+                return Err(Error::EntryOutsideSegments);
+            }
+        }
+        Ok(h)
+    }
+
+    /// Parses the header and load commands of a member of a fileset. Its entry
+    /// point isn't checked, as nothing runs it: the firmware enters the
+    /// collection's own `LC_UNIXTHREAD`. The kernel member has an
+    /// `LC_UNIXTHREAD` of its own, and in the collections of macOS 14.6.1,
+    /// 15.6.1, 26.6.2 and 27.0.1 its address is in none of the member's
+    /// segments.
+    pub fn parse_member(d: &[u8]) -> Result<Header, Error> {
         if u32_at(d, 0).map_err(|_| Error::BadMagic)? != MH_MAGIC_64 {
             return Err(Error::BadMagic);
         }
@@ -161,18 +185,6 @@ impl Header {
                 _ => {}
             }
             at += size;
-        }
-        // The entry point, if there is one, must land in a segment: the
-        // firmware turns it into a physical address relative to the lowest
-        // segment, and runs the kernel there.
-        if let Some(e) = h.entry {
-            let in_segment = h
-                .segments
-                .iter()
-                .any(|s| s.vmaddr <= e && e - s.vmaddr < s.vmsize);
-            if !in_segment {
-                return Err(Error::EntryOutsideSegments);
-            }
         }
         Ok(h)
     }
@@ -317,6 +329,25 @@ mod tests {
         assert_eq!(h.entry, Some(0xffff_0000_0000_1480));
         assert_eq!(h.vm_range(), (0xffff_0000_0000_0000, 0xffff_0000_0001_8000));
         assert_eq!(h.segment("__LINKEDIT").unwrap().vmsize, 0x8000);
+    }
+
+    #[test]
+    fn member_entry_outside_its_segments() {
+        // A kernel member whose LC_UNIXTHREAD address is in none of its
+        // segments, as macOS's are: the file to run is refused, the member is
+        // read.
+        let d = header(&[
+            segment("__TEXT", 0xffff_0000_0000_0000, 0x4000),
+            segment("__TEXT_EXEC", 0xffff_0000_0000_4000, 0x4000),
+            thread(0xffff_fc00_0000_4480),
+        ]);
+        assert_eq!(Header::parse(&d).unwrap_err(), Error::EntryOutsideSegments);
+        let h = Header::parse_member(&d).unwrap();
+        assert_eq!(h.entry, Some(0xffff_fc00_0000_4480));
+        assert_eq!(
+            h.segment("__TEXT_EXEC").unwrap().vmaddr,
+            0xffff_0000_0000_4000
+        );
     }
 
     /// An `LC_FILESET_ENTRY` command naming a member at `fileoff` in the file.
