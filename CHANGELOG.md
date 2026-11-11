@@ -16,8 +16,8 @@ release's image is published with the release.
   boot in the module. The example module makes its accesses in inline
   assembly, in `src/mmio.rs`, the firmware makes its own the same way, and
   the docs show it in C.
-- macOS 27.2.1 (26B131) guests boot under HVF with SIP enabled, and with
-  kexts added.
+- macOS 27.2.1 (26B131) guests boot under HVF and under TCG with SIP
+  enabled, and with kexts added.
 - A boot directory without `System/Library/Caches/apticket.der` boots:
   Ambrosia takes the boot manifest from the `apticket.*.im4m` in
   `/<group>/restore/` whose SHA-384 is the boot directory's name, and logs

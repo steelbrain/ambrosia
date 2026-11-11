@@ -21,7 +21,7 @@ arguments, checked by `csrutil status` over SSH:
 | 15.6.1 (24G90) | yes | yes |
 | 26.6.2 (25G83) | yes | yes |
 | 27.0.1 (26A434) | yes | yes |
-| 27.2.1 (26B131) | yes | not tested |
+| 27.2.1 (26B131) | yes | yes |
 
 Under HVF a guest answers SSH about 10 to 25 seconds after QEMU starts.
 Under TCG, with 4 vCPUs on an 8-core x86-64 host, it takes one to two and
