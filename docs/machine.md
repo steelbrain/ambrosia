@@ -58,9 +58,11 @@ Ambrosia boots only a machine with this layout.
 - **The PCIe ECAM and window**, which it hands to a graphics driver module
   and writes into the device tree.
 
-Ambrosia's own accesses to device memory are single-register loads and
-stores without writeback, which the CPU reports with a syndrome, so no VMM
-has to decode them.
+Ambrosia makes each of its accesses to the disk interface, the UART and
+avp-rtc, and each write to a framebuffer, in inline assembly, as one load
+or store of one register without writeback. The CPU reports those with a
+syndrome, so no VMM has to decode them. The config block is RAM, which
+traps to no VMM.
 
 AVPBooter does not boot on this layout: it keeps its stack at 0x70053ff0,
 which is in the PCIe window here.

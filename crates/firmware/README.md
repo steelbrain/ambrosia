@@ -23,6 +23,8 @@ and its config block, is here and not in the core.
   runs.
 - `heap.rs`: the bump allocator over RAM's second GiB.
 - `bdif.rs`: the machine's firmware disk interface, as a `BlockDevice`.
+- `mmio.rs`: the loads and stores of device registers, in inline assembly,
+  so that the CPU reports each with a syndrome.
 - `driver.rs`: loads and calls the graphics driver module.
 - `screen.rs`: the early console on the module's framebuffer.
 - `uart.rs`: the PL011 log, and the `log!` macro.

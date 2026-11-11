@@ -18,9 +18,9 @@
 
 #[path = "../../../crates/ambrosia/src/graphics.rs"]
 mod graphics;
+mod mmio;
 
 use core::fmt::{self, Write};
-use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use graphics::{Framebuffer, Services};
 
@@ -98,19 +98,19 @@ struct ConfigSpace(u64);
 impl ConfigSpace {
     fn read32(self, off: u64) -> u32 {
         // SAFETY: an aligned register of the ECAM, which Services gives.
-        unsafe { read_volatile((self.0 + off) as *const u32) }
+        unsafe { mmio::read32(self.0 + off) }
     }
     fn write32(self, off: u64, v: u32) {
         // SAFETY: as for read32.
-        unsafe { write_volatile((self.0 + off) as *mut u32, v) }
+        unsafe { mmio::write32(self.0 + off, v) }
     }
     fn read16(self, off: u64) -> u16 {
         // SAFETY: as for read32.
-        unsafe { read_volatile((self.0 + off) as *const u16) }
+        unsafe { mmio::read16(self.0 + off) }
     }
     fn write16(self, off: u64, v: u16) {
         // SAFETY: as for read32.
-        unsafe { write_volatile((self.0 + off) as *mut u16, v) }
+        unsafe { mmio::write16(self.0 + off, v) }
     }
 
     /// The size of memory BAR `i`, and whether it is 64-bit, or `None` if
@@ -163,12 +163,12 @@ fn find(s: &Services) -> Option<(ConfigSpace, u64, u64)> {
 
 fn dispi_read(regs: u64, index: u64) -> u16 {
     // SAFETY: a DISPI register in the device's BAR 2, which decodes.
-    unsafe { read_volatile((regs + DISPI + 2 * index) as *const u16) }
+    unsafe { mmio::read16(regs + DISPI + 2 * index) }
 }
 
 fn dispi_write(regs: u64, index: u64, v: u16) {
     // SAFETY: as for dispi_read.
-    unsafe { write_volatile((regs + DISPI + 2 * index) as *mut u16, v) }
+    unsafe { mmio::write16(regs + DISPI + 2 * index, v) }
 }
 
 // The entry point has the interface's signature.
@@ -235,7 +235,7 @@ pub extern "C" fn driver_entry(s: &Services, out: &mut Framebuffer) -> i32 {
     dispi_write(regs, X_OFFSET, 0);
     dispi_write(regs, Y_OFFSET, 0);
     // SAFETY: QEMU's extended register in BAR 2.
-    unsafe { write_volatile((regs + BYTE_ORDER) as *mut u32, LITTLE_ENDIAN) };
+    unsafe { mmio::write32(regs + BYTE_ORDER, LITTLE_ENDIAN) };
     dispi_write(regs, ENABLE, ENABLED | LFB_ENABLED);
 
     log(

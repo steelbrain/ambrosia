@@ -4,8 +4,9 @@
 //! command register, and the machine has filled the buffer and the status
 //! byte when the store returns.
 
+use crate::mmio;
 use ambrosia::block::{BlockDevice, SECTOR};
-use core::ptr::{addr_of_mut, write_volatile};
+use core::ptr::addr_of_mut;
 
 const BASE: usize = 0x3000_0000;
 const REG_CMD: usize = 0x408;
@@ -139,8 +140,8 @@ impl BlockDevice for Disk {
                     flags: 0,
                 };
                 core::arch::asm!("dsb sy");
-                write_volatile(
-                    (BASE + self.0 as usize + REG_CMD) as *mut u64,
+                mmio::write64(
+                    BASE + self.0 as usize + REG_CMD,
                     &s.req as *const Request as u64,
                 );
                 core::arch::asm!("dsb sy");

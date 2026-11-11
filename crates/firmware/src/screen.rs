@@ -16,8 +16,9 @@ impl Pixels for Fb {
         // made on, and `start` takes only a framebuffer that
         // `console::check` found inside the PCIe window. The identity map
         // has the window as device memory, and the module left the
-        // framebuffer's BAR decoding.
-        unsafe { core::ptr::write_volatile(self.0.add(index), value) }
+        // framebuffer's BAR decoding. The index is of 32-bit pixels, so
+        // the address is aligned to 4.
+        unsafe { crate::mmio::write32(self.0.add(index) as usize, value) }
     }
 }
 

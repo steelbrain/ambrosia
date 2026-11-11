@@ -10,7 +10,7 @@ follows and what the kernel does with its framebuffer.
 ## Start from the example
 
 [`drivers/bochs-display`](../../drivers/bochs-display/README.md) is a
-complete module in about 270 lines of Rust. Copy its directory to start a
+complete module in about 330 lines of Rust. Copy its directory to start a
 new one:
 
 ```sh
@@ -27,7 +27,9 @@ Then, in the copy:
 3. Keep the `#[path]` line in `src/main.rs` that includes
    `crates/ambrosia/src/graphics.rs`, the interface's types, as they are.
    Fix the relative path if the directory is elsewhere.
-4. Change `VENDOR` and `DEVICE` to your device's PCI IDs, and replace the
+4. Keep `src/mmio.rs`, the loads and stores of device registers, and make
+   each of your device's accesses through it.
+5. Change `VENDOR` and `DEVICE` to your device's PCI IDs, and replace the
    mode setting with your device's.
 
 ## Write the entry point
@@ -53,9 +55,12 @@ Keep to the rules in
 [what a module may and must not do](../graphics-drivers.md#what-a-module-may-and-must-not-do).
 The ones that bite most often:
 
-- Access device memory only with aligned, single loads and stores, such as
-  Rust's `read_volatile` and `write_volatile`. Device memory faults on an
-  unaligned or exclusive access.
+- Access device registers in inline assembly, each access one aligned load
+  or store of one general-purpose register with no writeback, as the
+  example's `src/mmio.rs` does. A volatile access can compile to a pre-
+  or post-indexed form, which the CPU reports without a syndrome
+  ([accessing device registers](../graphics-drivers.md#accessing-device-registers)).
+  Device memory faults on an unaligned or exclusive access.
 - Give BARs addresses the kernel keeps: inside the window, apart from each
   other, and a 32-bit BAR short of 0xffffffff
   ([where the BARs go](../graphics-drivers.md#where-the-bars-go)).

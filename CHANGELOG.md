@@ -7,6 +7,15 @@ release's image is published with the release.
 
 ## Unreleased
 
+- The graphics driver interface's rule for device registers is the one the
+  CPU has: each access one load or store of one general-purpose register,
+  with no writeback, which the CPU reports to the hypervisor with a
+  syndrome. The docs said a volatile access was enough, but a compiler may
+  make one a pre- or post-indexed load, which a VMM must decode itself:
+  QEMU on KVM, without such a decoder, injects an abort, which stops the
+  boot in the module. The example module makes its accesses in inline
+  assembly, in `src/mmio.rs`, the firmware makes its own the same way, and
+  the docs show it in C.
 - macOS 27.2.1 (26B131) guests boot under HVF with SIP enabled, and with
   kexts added.
 - A boot directory without `System/Library/Caches/apticket.der` boots:

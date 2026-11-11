@@ -17,6 +17,10 @@ nothing after.
   includes the interface's types from
   [`crates/ambrosia/src/graphics.rs`](../../crates/ambrosia/src/graphics.rs)
   as they are.
+- `src/mmio.rs`: the loads and stores of the device's registers, in inline
+  assembly, so that each is one instruction of a form the CPU reports with
+  a syndrome
+  ([accessing device registers](../../docs/graphics-drivers.md#accessing-device-registers)).
 - `.cargo/config.toml`: builds for `aarch64-unknown-none` as a static PIE,
   with `driver_entry` as the ELF's entry point.
 - `config.plist`: a configuration that starts the module from

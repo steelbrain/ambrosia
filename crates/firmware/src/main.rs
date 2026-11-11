@@ -12,6 +12,7 @@ mod bdif;
 mod driver;
 mod heap;
 mod keys;
+mod mmio;
 mod mmu;
 mod screen;
 
@@ -58,7 +59,7 @@ const PCIE_WINDOW: (u64, u64) = (0x5000_0000, mmu::RAM_BASE - 0x5000_0000);
 /// (docs/machine.md, "avp-rtc").
 fn avp_rtc() -> bool {
     // SAFETY: device memory in the identity map; the read has no effect.
-    unsafe { core::ptr::read_volatile(0x3024_0040 as *const u32) == 0xf001 }
+    unsafe { mmio::read32(0x3024_0040) == 0xf001 }
 }
 
 /// The machine's config block (QEMU's `hw/vmapple/cfg.c`).

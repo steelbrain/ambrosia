@@ -2,8 +2,8 @@
 //! well, and the early console once a graphics driver gives one
 //! (`screen.rs`). QEMU's PL011 needs no setup to transmit.
 
+use crate::mmio;
 use core::fmt::{self, Write};
-use core::ptr::{read_volatile, write_volatile};
 
 const BASE: usize = 0x2001_0000;
 const DR: usize = 0x00;
@@ -20,8 +20,8 @@ impl Uart {
         // identity map. Reading the flags has no effect, and writing the
         // data register sends the byte.
         unsafe {
-            while read_volatile((BASE + FR) as *const u32) & FR_TXFF != 0 {}
-            write_volatile((BASE + DR) as *mut u32, u32::from(byte));
+            while mmio::read32(BASE + FR) & FR_TXFF != 0 {}
+            mmio::write32(BASE + DR, u32::from(byte));
         }
     }
 }

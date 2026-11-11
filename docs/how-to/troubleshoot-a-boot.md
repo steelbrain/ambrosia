@@ -151,8 +151,11 @@ read but couldn't be laid out:
 **Faults.** `exception N: ESR ... ELR ... FAR ...`, then the registers,
 means the firmware or a driver module took an exception.
 [Reading an exception](../../crates/firmware/README.md#reading-an-exception)
-shows how to find the code at `ELR`. Under TCG, a `FAR` of `0x30240040`
-means the machine has no avp-rtc
+shows how to find the code at `ELR`. A data abort in a graphics driver
+module, with a `FAR` in the ECAM or one of its device's BARs, can be an
+access the VMM couldn't emulate
+([accessing device registers](../graphics-drivers.md#accessing-device-registers)).
+Under TCG, a `FAR` of `0x30240040` means the machine has no avp-rtc
 ([running under TCG](run-under-tcg.md#problems-you-may-meet)).
 `panic: ...` means the firmware panicked, and says where.
 

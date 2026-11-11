@@ -136,8 +136,9 @@ int32_t entry(const struct services *services, struct framebuffer *out);
   the first 4 GiB, the ECAM and the PCIe window among it, is device memory
   and not executable. Each access there must be aligned to its size, with
   no `dc zva` and no exclusive or atomic accesses. Rust's
-  `aarch64-unknown-none` target builds with strict alignment, and a
-  volatile read or write of each register is such an access.
+  `aarch64-unknown-none` target builds with strict alignment. Each access
+  to a register must also be one instruction of a form the CPU reports
+  with a syndrome ([below](#accessing-device-registers)).
 - With FP and SIMD on.
 - On Ambrosia's stack, with more than 32 KiB of it free at the call.
 - With the virtual counter, `CNTVCT_EL0`, and its frequency, `CNTFRQ_EL0`,
@@ -145,6 +146,44 @@ int32_t entry(const struct services *services, struct framebuffer *out);
 
 An exception in the module stops the boot: Ambrosia's vectors log it with
 the registers and halt ([the log](boot-process.md#the-log)).
+
+## Accessing device registers
+
+The VMM emulates the ECAM and the device's registers: each load or store
+there traps to it, and it needs the access's size, direction and register.
+The CPU gives it those, in the abort's syndrome (ISV=1), only for a load or
+store of one general-purpose register with an immediate or register
+offset, such as `ldr w0, [x1]` or `strh w0, [x1, #0x502]`. Pairs (`ldp`,
+`stp`), SIMD&FP registers, and the pre- and post-indexed forms, which
+write the address back, such as `ldr w9, [x8, #0x10]!`, come without one.
+The VMM must then read the instruction from guest memory and emulate it,
+and one that doesn't stops, or injects an abort, which stops the boot
+([the machine](machine.md#mmio-accesses-without-a-syndrome-under-hvf)).
+
+A volatile access, in Rust or C, fixes each access's size and number, but
+not its instruction, and whether the compiler folds an address update into
+one depends on the code around it. clang compiles a C function that sizes a
+BAR through `volatile uint32_t *` to `ldr w9, [x8, #0x10]!` on its own, and
+to `ldr w8, [x0, #0x10]` where it is inlined with a constant index.
+
+So make each access in inline assembly, which fixes the instruction. The
+example does it in Rust, in
+[`src/mmio.rs`](../drivers/bochs-display/src/mmio.rs). In C:
+
+```c
+static inline uint32_t read32(uint64_t at) {
+    uint32_t v;
+    __asm__ volatile("ldr %w0, [%1]" : "=r"(v) : "r"(at) : "memory");
+    return v;
+}
+
+static inline void write32(uint64_t at, uint32_t v) {
+    __asm__ volatile("str %w0, [%1]" : : "r"(v), "r"(at) : "memory");
+}
+```
+
+`ldrh` and `strh` make 16-bit accesses, `ldrb` and `strb` 8-bit ones, and
+`ldr` and `str` with `%x0` 64-bit ones.
 
 ## What a module may and must not do
 
