@@ -21,6 +21,7 @@ arguments, checked by `csrutil status` over SSH:
 | 15.6.1 (24G90) | yes | yes |
 | 26.6.2 (25G83) | yes | yes |
 | 27.0.1 (26A434) | yes | yes |
+| 27.2.1 (26B131) | yes | not tested |
 
 Under HVF a guest answers SSH about 10 to 25 seconds after QEMU starts.
 Under TCG, with 4 vCPUs on an 8-core x86-64 host, it takes one to two and
@@ -29,7 +30,7 @@ a half minutes.
 Kexts named in the configuration are placed in an Auxiliary kernel
 collection that Ambrosia builds in memory, and the kernel starts them with
 SIP enabled. Nothing is done in the guest for it: it needs neither Reduced
-Security nor kext approval. This has been tested on 13.6 to 27.0.1.
+Security nor kext approval. This has been tested on 13.6 to 27.2.1.
 
 What it doesn't do:
 

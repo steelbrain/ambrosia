@@ -237,7 +237,7 @@ which answers each as not supported.
 
 macOS 13's kernel doesn't spin on a failure. From macOS 14 on, the kernel spins
 when one fails: `hvc #0` followed by `cbnz x0, .`, a branch to itself.
-14.6.1 to 27.0.1 have 19 such sites: in every CPU's start code, in
+14.6.1 to 27.2.1 have 19 such sites: in every CPU's start code, in
 GET_DEFAULT_KEYS, and on context switches. Ambrosia turns each `cbnz x0, .`
 that directly follows an `hvc #0` in the collection's executable segments
 into a `nop` ([`pac.rs`](../../crates/ambrosia/src/pac.rs)). On 12.6 and

@@ -19,9 +19,9 @@ which are all QEMU needs:
 QEMU reads both images as raw files, so if a tool wrote the disk in
 another format, convert it to a raw image first.
 
-The tested builds are 12.6, 13.6, 14.6.1, 15.6.1, 26.6.2 and 27.0.1. macOS
-11 can't be a guest: no macOS 11 restore image has a build for the
-`vmapple` machine.
+The tested builds are 12.6, 13.6, 14.6.1, 15.6.1, 26.6.2, 27.0.1 and
+27.2.1. macOS 11 can't be a guest: no macOS 11 restore image has a build
+for the `vmapple` machine.
 
 ## Set it up under Virtualization.framework
 

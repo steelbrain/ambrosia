@@ -311,7 +311,7 @@ on, the kernel spins when one fails: `hvc #0; cbnz x0, .`.
 Ambrosia replaces each `cbnz x0, .` (0xb5000000) that directly follows an
 `hvc #0` (0xd4000002) in the collection's executable segments with a `nop`
 (0xd503201f) ([`pac.rs`](../crates/ambrosia/src/pac.rs)). The kernels of
-14.6.1 to 27.0.1 have 19 such sites; those of 12.6 and 13.6 have none, and
+14.6.1 to 27.2.1 have 19 such sites; those of 12.6 and 13.6 have none, and
 the pass changes nothing there.
 
 ```text

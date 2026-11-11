@@ -34,7 +34,7 @@ Line by line:
    ([boot process](../boot-process.md#nvram-and-the-clock)).
 6. The kernel collection, unpacked and placed.
 7. How many of the kernel's PAC spins were made `nop`s. The 12.6 and 13.6
-   kernels have none, and those of 14.6.1 to 27.0.1 have 19 each.
+   kernels have none, and those of 14.6.1 to 27.2.1 have 19 each.
 8. The memory layout written into the boot arguments, and the kernel's
    slide.
 9. The jump into the kernel.

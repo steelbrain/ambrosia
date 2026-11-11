@@ -7,6 +7,8 @@ release's image is published with the release.
 
 ## Unreleased
 
+- macOS 27.2.1 (26B131) guests boot under HVF with SIP enabled, and with
+  kexts added.
 - A boot directory without `System/Library/Caches/apticket.der` boots:
   Ambrosia takes the boot manifest from the `apticket.*.im4m` in
   `/<group>/restore/` whose SHA-384 is the boot directory's name, and logs
