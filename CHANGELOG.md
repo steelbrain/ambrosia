@@ -7,6 +7,12 @@ release's image is published with the release.
 
 ## Unreleased
 
+- A boot directory without `System/Library/Caches/apticket.der` boots:
+  Ambrosia takes the boot manifest from the `apticket.*.im4m` in
+  `/<group>/restore/` whose SHA-384 is the boot directory's name, and logs
+  which file it read. The Preboot volume keeps a copy of the manifest
+  there, and a disk built without macOS's installer, such as one macOS
+  27.2.1 (26B131) guest image, can have only that copy.
 - The boot arguments are written in both of XNU's layouts. The 12.6 and
   13.6 kernels read 736 bytes. The kernels from 14.6.1 on read 1152 bytes,
   with a 1024-byte command line, so their `bootFlags` and `memSizeActual`

@@ -139,7 +139,13 @@ macOS install. In the Preboot volume, the file `/G/boot/active` holds H,
 the SHA-384 of the install's boot manifest, in hex. Ambrosia reads these
 files from `/G/boot/H/`:
 
-- `System/Library/Caches/apticket.der`, the boot manifest (IM4M);
+- `System/Library/Caches/apticket.der`, the boot manifest (IM4M). The
+  Preboot volume keeps a copy in `/G/restore/` as well, as
+  `apticket.vma2macosap.<ECID>.im4m`, beside other tickets, and a disk
+  built without macOS's installer can have only that copy. Where the boot
+  directory has no `apticket.der`, Ambrosia takes the `apticket.*.im4m` in
+  `/G/restore/` whose SHA-384 is H, and logs
+  `boot manifest: /G/restore/<file>, whose SHA-384 names the boot directory`;
 - `System/Library/Caches/com.apple.kernelcaches/kernelcache`, the kernel
   collection;
 - `usr/standalone/firmware/devicetree.img4`, the device tree template;

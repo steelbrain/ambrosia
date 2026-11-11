@@ -13,6 +13,7 @@ use crate::apfs::{self, Container, Role, Volume};
 use crate::block::{BlockDevice, SECTOR};
 use crate::boot::{self, Files};
 use crate::gpt::{self, APFS_TYPE, Gpt, ISC_TYPE};
+use crate::sha384::sha384;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -195,6 +196,52 @@ fn read<D: BlockDevice>(v: &mut Volume<'_, D>, path: &str) -> Result<Vec<u8>, Er
     Ok(v.read(&file)?)
 }
 
+/// A ticket's file name, and its bytes.
+type Ticket = (String, Vec<u8>);
+
+/// The boot manifest of a boot directory that holds no
+/// `System/Library/Caches/apticket.der`: the `apticket.*.im4m` in
+/// `/<group>/restore/` whose SHA-384 is the boot directory's name, with that
+/// file's name. The Preboot volume keeps a copy of the manifest there,
+/// beside other tickets, and a disk built without macOS's installer can have
+/// only that copy. The boot directory's name picks the one the boot objects
+/// were signed with. `None` where there is no such file.
+fn restore_manifest<D: BlockDevice>(
+    v: &mut Volume<'_, D>,
+    group: &str,
+    boot_dir: &str,
+) -> Result<Option<Ticket>, Error<D::Error>> {
+    let dir = format!("/{group}/restore");
+    let listing = match v.lookup(&dir) {
+        Ok(listing) => listing,
+        Err(apfs::Error::NotFound { .. }) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let tickets: Vec<String> = v
+        .read_dir(&listing)?
+        .into_iter()
+        .map(|e| e.name)
+        .filter(|n| n.starts_with("apticket.") && n.ends_with(".im4m"))
+        .collect();
+    for ticket in tickets {
+        let data = read(v, &format!("{dir}/{ticket}"))?;
+        if names_manifest(boot_dir, &data) {
+            return Ok(Some((ticket, data)));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `boot_dir`, a boot directory's name, is `manifest`'s SHA-384 in
+/// hex, as macOS names the directory.
+fn names_manifest(boot_dir: &str, manifest: &[u8]) -> bool {
+    let hash: String = sha384(manifest)
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect();
+    hash.eq_ignore_ascii_case(boot_dir)
+}
+
 /// Reads the boot objects of the one macOS install on `root`, and NVRAM
 /// from `aux`. `log` takes progress lines for the boot log.
 pub fn read_all<D: BlockDevice>(
@@ -222,9 +269,26 @@ pub fn read_all<D: BlockDevice>(
         "macOS {volume_group}, boot objects {boot_dir}"
     ));
     let dir = format!("/{volume_group}/boot/{boot_dir}");
+    let manifest = match read(
+        &mut preboot,
+        &format!("{dir}/System/Library/Caches/apticket.der"),
+    ) {
+        Err(Error::Apfs(apfs::Error::NotFound { dir: at, name })) => {
+            match restore_manifest(&mut preboot, &volume_group, &boot_dir)? {
+                Some((ticket, data)) => {
+                    log(format_args!(
+                        "boot manifest: /{volume_group}/restore/{ticket}, whose SHA-384 names \
+                         the boot directory"
+                    ));
+                    data
+                }
+                None => return Err(Error::Apfs(apfs::Error::NotFound { dir: at, name })),
+            }
+        }
+        r => r?,
+    };
     let mut boot_file = |path: &str| read(&mut preboot, &format!("{dir}/{path}"));
     let fw = "usr/standalone/firmware";
-    let manifest = boot_file("System/Library/Caches/apticket.der")?;
     let kernel = boot_file("System/Library/Caches/com.apple.kernelcaches/kernelcache")?;
     let device_tree = boot_file(&format!("{fw}/devicetree.img4"))?;
     let root_hash = boot_file(&format!("{fw}/root_hash.img4"))?;
@@ -295,6 +359,20 @@ mod tests {
             buf.copy_from_slice(src);
             Ok(())
         }
+    }
+
+    #[test]
+    fn a_boot_directory_names_its_manifest() {
+        let manifest = b"IM4M, as a restore keeps it";
+        let name: String = sha384(manifest)
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect();
+        assert!(names_manifest(&name, manifest));
+        assert!(names_manifest(&name.to_lowercase(), manifest));
+        assert!(!names_manifest(&name, b"another ticket"));
+        assert!(!names_manifest(&name[..94], manifest));
+        assert!(!names_manifest("", manifest));
     }
 
     #[test]

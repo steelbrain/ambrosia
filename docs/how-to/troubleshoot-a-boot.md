@@ -39,6 +39,12 @@ Line by line:
    slide.
 9. The jump into the kernel.
 
+Where the boot directory has no `System/Library/Caches/apticket.der`, the
+boot manifest comes from the Preboot volume's `restore` directory, and a
+line after the third says which file it was:
+`boot manifest: /<group>/restore/<file>, whose SHA-384 names the boot directory`
+([boot process](../boot-process.md#reading-the-boot-objects)).
+
 A configuration bundle adds lines of its own:
 
 - `configuration: <bytes> bytes, <n> kexts, <n> patches, graphics driver <path>`,
