@@ -37,6 +37,8 @@ pub enum Error {
     NotABundle,
     /// The firmware's reader refuses the archive.
     Archive(bundle::Error),
+    /// The archive has no config.plist, which a configuration bundle needs.
+    NoConfig,
     /// A property list that doesn't parse: its path in the bundle, and why.
     Plist(String, plist::Error),
     /// config.plist's top level is not a dictionary.
@@ -163,11 +165,11 @@ impl fmt::Display for Error {
                     f,
                     "the archive member at byte {at} has a path that is not UTF-8"
                 ),
-                bundle::Error::NoConfig => f.write_str(
-                    "the archive's first file is not config.plist; ambrosia-bundle create puts \
-                     it first",
-                ),
             },
+            Error::NoConfig => f.write_str(
+                "the archive has no config.plist; ambrosia-bundle create puts one in every \
+                 configuration bundle",
+            ),
             Error::Plist(file, e) => write!(
                 f,
                 "{file}: not a property list the firmware reads: {} at byte {}; it must be an \

@@ -722,19 +722,18 @@ fn driver_errors() {
 #[test]
 fn archive_errors() {
     assert!(matches!(check(b"not an archive"), Err(Error::NotABundle)));
+    // config.plist need not be first: the reader finds it by name.
     let a = newc::write(&[
         Entry::file("other", false, Vec::new()),
         Entry::file("config.plist", false, b"<dict/>".to_vec()),
     ]);
+    check(&a).unwrap();
+
+    // An archive with no config.plist is not a configuration bundle.
+    let a = newc::write(&[Entry::file("other", false, b"x".to_vec())]);
     let e = check(&a).unwrap_err();
-    assert!(
-        matches!(e, Error::Archive(bundle::Error::NoConfig)),
-        "{e:?}"
-    );
-    assert!(
-        e.to_string().contains("first file is not config.plist"),
-        "{e}"
-    );
+    assert!(matches!(e, Error::NoConfig), "{e:?}");
+    assert!(e.to_string().contains("no config.plist"), "{e}");
 
     // config.plist's member: 110 + 13 bytes of header and path, padded to
     // 124, and 7 of data, padded to 132, where the trailer starts.

@@ -66,6 +66,12 @@ pub fn read(archive: &[u8]) -> Result<Bundle<'_>, Error> {
 /// find there.
 pub fn check(archive: &[u8]) -> Result<Summary, Error> {
     let b = read(archive)?;
+    // The core reads a configuration from any archive, finding config.plist by
+    // name; the tool builds and checks configuration bundles, which must carry
+    // one.
+    if b.file(bundle::CONFIG).is_none() {
+        return Err(Error::NoConfig);
+    }
     let config = Config::read(&b).map_err(config_error)?;
     // Config::read parsed config.plist, so this parse succeeds.
     let root = plist::parse(b.config()).map_err(|e| Error::Plist(bundle::CONFIG.into(), e))?;
