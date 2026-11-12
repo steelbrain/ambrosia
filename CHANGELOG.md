@@ -5,6 +5,15 @@ Every release of Ambrosia, newest first. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 release's image is published with the release.
 
+## Unreleased
+
+- A `Kernel` > `Patch` can carry an `Expect`, the number of matches it must
+  replace. The boot stops, with `Kernel.Patch for <id> replaced <n>
+  matches, not the <expect> it requires`, when the patch replaces a
+  different number, so a patch that must land fails loudly on a kernel
+  collection it no longer fits rather than booting unpatched. Without
+  `Expect`, a patch that matches nothing still doesn't stop the boot.
+
 ## 0.1.2 - macOS 27.2.1
 
 - macOS 27.2.1 (26B131) guests boot under HVF and under TCG with SIP

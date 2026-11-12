@@ -22,6 +22,9 @@
 //!         <key>Replace</key>     <data>...</data> (as long as Find)
 //!         <key>Count</key>       <integer>1</integer> (optional; 0, the
 //!                                                     default, is every match)
+//!         <key>Expect</key>      <integer>1</integer> (optional; the boot
+//!                                                     stops unless this many
+//!                                                     matched)
 //!         <key>Enabled</key>     <true/>           (optional, default true)
 //!       </dict>
 //!     </array>
@@ -98,6 +101,9 @@ pub struct Patch {
     pub replace: Vec<u8>,
     /// How many matches to replace, from the entry's start: 0 is all.
     pub count: u64,
+    /// The number of matches the patch must replace, or the boot stops:
+    /// `None`, with no `Expect` key, replaces what it finds and never stops.
+    pub expect: Option<u64>,
 }
 
 /// The graphics driver module to start, read from the bundle.
@@ -297,11 +303,13 @@ impl<'a> Config<'a> {
                 return Err(Error::PatchLength(i));
             }
             let count = optional(e, &at, "Count", Value::as_u64)?.unwrap_or(0);
+            let expect = optional(e, &at, "Expect", Value::as_u64)?;
             config.patches.push(Patch {
                 identifier,
                 find,
                 replace,
                 count,
+                expect,
             });
         }
 
@@ -417,7 +425,7 @@ mod tests {
             <key>Patch</key><array>
               <dict><key>Identifier</key><string>com.apple.kernel</string>
                 <key>Find</key><data>AQID</data><key>Replace</key><data>BAUG</data>
-                <key>Count</key><integer>1</integer></dict>
+                <key>Count</key><integer>1</integer><key>Expect</key><integer>1</integer></dict>
             </array></dict></dict>"#,
             &[
                 ("Kexts/T.kext/Contents/Info.plist", 0o100644, KEXT_INFO),
@@ -437,7 +445,8 @@ mod tests {
                 identifier: "com.apple.kernel".into(),
                 find: vec![1, 2, 3],
                 replace: vec![4, 5, 6],
-                count: 1
+                count: 1,
+                expect: Some(1)
             }]
         );
     }
@@ -625,6 +634,7 @@ mod tests {
             find: vec![1, 1],
             replace: vec![2, 2],
             count: 0,
+            expect: None,
         };
         let mut b = [1, 1, 1, 0, 1, 1];
         assert_eq!(apply(&p, &mut b, 0), 2);

@@ -187,6 +187,10 @@ collection, each a dictionary:
   `Find` has.
 - `Count`, an integer, default 0: how many matches to replace, counting
   from the start of the entry. 0 replaces every match.
+- `Expect`, an integer, optional: the number of matches the patch must
+  replace. With it set, the boot stops unless the patch replaced exactly
+  that many. Without it, the patch replaces what it finds and a mismatch
+  is not an error.
 - `Enabled`, a boolean, default true. A patch set to false is skipped.
 
 Patches apply in the order they are listed, after the kernel collection is
@@ -203,9 +207,13 @@ Each patch logs how many matches it replaced:
 ambrosia: patch for com.apple.kernel: 1 replaced
 ```
 
-A patch that matches nothing doesn't stop the boot. A patch whose
-`Identifier` names no entry does, with
-`boot failed: Kernel.Patch names <id>, which is not an entry of the kernel collection`.
+A patch without `Expect` that matches nothing doesn't stop the boot. A
+patch with `Expect` that replaces a different number of matches does, with
+`boot failed: Kernel.Patch for <id> replaced <n> matches, not the <expect> it requires`.
+Set `Expect` for a patch that must land, so a kernel collection the patch
+no longer fits stops the boot with a named error instead of booting
+unpatched. A patch whose `Identifier` names no entry stops the boot too,
+with `boot failed: Kernel.Patch names <id>, which is not an entry of the kernel collection`.
 
 ### Kernel > ExportVtableDiscriminators
 

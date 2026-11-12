@@ -102,6 +102,17 @@ pub enum Error {
     NoRoom,
     /// A patch names an entry the kernel collection doesn't have.
     NoEntry(String),
+    /// A patch with an `Expect` replaced a number of matches other than the
+    /// number it requires: the entry's identifier, the number required, and
+    /// the number replaced.
+    PatchExpect {
+        /// The patch's `Identifier`.
+        id: String,
+        /// Its `Expect`: the number of matches it must replace.
+        expect: u64,
+        /// The number of matches it did replace.
+        done: u64,
+    },
     /// A kext the configuration names can't be placed: its bundle
     /// identifier, and why.
     Kext(String, KextError),
@@ -139,6 +150,10 @@ impl fmt::Display for Error {
             Error::NoEntry(id) => write!(
                 f,
                 "Kernel.Patch names {id}, which is not an entry of the kernel collection"
+            ),
+            Error::PatchExpect { id, expect, done } => write!(
+                f,
+                "Kernel.Patch for {id} replaced {done} matches, not the {expect} it requires"
             ),
             Error::Kext(id, e) => write!(f, "kext {id}: {e}"),
             Error::NoHeaderRoom => f.write_str(
@@ -591,6 +606,15 @@ pub fn prepare(
             }
         }
         log(format_args!("patch for {}: {done} replaced", p.identifier));
+        if let Some(expect) = p.expect
+            && done != expect
+        {
+            return Err(Error::PatchExpect {
+                id: p.identifier.clone(),
+                expect,
+                done,
+            });
+        }
     }
 
     // Build the Auxiliary KC for every configured kext, from the Boot KC's
@@ -976,6 +1000,15 @@ mod tests {
             Error::NoEntry("com.example.none".into()).to_string(),
             "Kernel.Patch names com.example.none, which is not an entry of the kernel \
              collection"
+        );
+        assert_eq!(
+            Error::PatchExpect {
+                id: "com.apple.kernel".into(),
+                expect: 1,
+                done: 0,
+            }
+            .to_string(),
+            "Kernel.Patch for com.apple.kernel replaced 0 matches, not the 1 it requires"
         );
         assert_eq!(
             Error::Image("kernelcache", img4::Error::Encrypted).to_string(),

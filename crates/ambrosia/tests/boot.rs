@@ -87,6 +87,7 @@ fn prepares_a_guest() {
             find: b"Darwin Kernel Version ".to_vec(),
             replace: b"Ambrosia-patched kern ".to_vec(),
             count: 1,
+            expect: Some(1),
         }],
         ..Config::default()
     };

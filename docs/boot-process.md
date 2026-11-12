@@ -326,7 +326,9 @@ every process, with no per-process B keys and no EL0 diversifier.
 Each `Kernel` > `Patch` entry is applied next, over the segments of the
 collection entry it names, but `__LINKEDIT`
 ([configuration](configuration.md#kernel--patch)). Each logs how many
-matches it replaced.
+matches it replaced. A patch with an `Expect` that replaces a different
+number stops the boot, so a patch that must land fails loudly on a kernel
+collection it no longer fits rather than booting unpatched.
 
 ## Placing the kexts
 
