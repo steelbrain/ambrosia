@@ -33,6 +33,7 @@ pub mod nvram;
 pub mod pac;
 pub mod place;
 pub mod plist;
+pub mod restore;
 pub mod sha384;
 pub mod tree;
 pub mod vtdisc;

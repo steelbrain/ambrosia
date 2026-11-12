@@ -36,8 +36,8 @@ pub struct File<'a> {
 /// A parsed bundle, borrowing the archive's bytes.
 #[derive(Debug)]
 pub struct Bundle<'a> {
-    /// The regular files, in the archive's order. The first is
-    /// `config.plist`.
+    /// The regular files, in the archive's order. A configuration bundle
+    /// leads with `config.plist`; a restore bundle holds the restore members.
     pub files: Vec<File<'a>>,
     /// The archive's length, through its trailer.
     pub len: usize,
@@ -52,8 +52,6 @@ pub enum Error {
     Truncated(usize),
     /// The path of the member at this offset is not UTF-8.
     BadPath(usize),
-    /// The first file is not `config.plist`.
-    NoConfig,
 }
 
 impl core::fmt::Display for Error {
@@ -70,7 +68,6 @@ impl core::fmt::Display for Error {
                 f,
                 "the archive member at byte {at} has a path that is not UTF-8"
             ),
-            Error::NoConfig => write!(f, "the archive's first file is not {CONFIG}"),
         }
     }
 }
@@ -125,9 +122,6 @@ impl<'a> Bundle<'a> {
                 .ok_or(Error::Truncated(at))?;
             let next = pad4(data_at + size);
             if path == TRAILER {
-                if files.first().map(|f: &File<'_>| f.path) != Some(CONFIG) {
-                    return Err(Error::NoConfig);
-                }
                 return Ok(Bundle { files, len: next });
             }
             if mode & S_IFMT == S_IFREG {
@@ -143,10 +137,10 @@ impl<'a> Bundle<'a> {
         self.files.iter().find(|f| f.path == path).map(|f| f.data)
     }
 
-    /// The configuration's bytes: the first file's, which
-    /// [`Bundle::parse`] makes sure is `config.plist`.
+    /// The `config.plist` bytes, or empty if the bundle has none: a restore
+    /// bundle, or bytes that parse as an archive but aren't a configuration.
     pub fn config(&self) -> &'a [u8] {
-        self.files[0].data
+        self.file(CONFIG).unwrap_or(&[])
     }
 }
 
@@ -208,8 +202,12 @@ pub(crate) mod tests {
     #[test]
     fn errors() {
         assert!(Bundle::find(&[0; 256]).is_none());
-        let a = archive(&[("x", 0o100644, b"1"), ("config.plist", 0o100644, b"")]);
-        assert_eq!(Bundle::parse(&a).unwrap_err(), Error::NoConfig);
+        // Any newc archive parses; config() finds config.plist by name
+        // wherever it sits, and is empty when the bundle has none.
+        let a = archive(&[("x", 0o100644, b"1"), ("config.plist", 0o100644, b"2")]);
+        assert_eq!(Bundle::parse(&a).unwrap().config(), b"2");
+        let a = archive(&[("restore-kernelcache.im4p", 0o100644, b"\x30")]);
+        assert_eq!(Bundle::parse(&a).unwrap().config(), b"");
         let a = archive(&[("config.plist", 0o100644, b"0123456789")]);
         assert_eq!(Bundle::parse(&a[..120]).unwrap_err(), Error::Truncated(0));
         // Fields of hexadecimal digits only: no other letter, and no sign.
