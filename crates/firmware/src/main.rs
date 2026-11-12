@@ -20,6 +20,7 @@ use ambrosia::boot::{self, Memory};
 use ambrosia::bundle::{self, Bundle};
 use ambrosia::config::Config;
 use ambrosia::files;
+use ambrosia::restore;
 use ambrosia::tree::Machine;
 use core::arch::{asm, global_asm};
 
@@ -40,6 +41,13 @@ unsafe extern "C" {
 const BUNDLE_AT: u64 = mmu::RAM_BASE + (512 << 20);
 // That space is the most the bundle's reader takes, `bundle::MAX_LEN`.
 const _: () = assert!(BUNDLE_AT + bundle::MAX_LEN as u64 == mmu::RAM_BASE + (1 << 30));
+
+/// Where the restore ramdisk is, when the bundle is a restore bundle: its own
+/// loader object, 2 GiB into RAM, above the heap
+/// (`-device loader,file=<ramdisk>,addr=0x180000000,force-raw=on`). A restore
+/// boot runs on the 8 GiB guest that puts the heap's top here, so the ramdisk
+/// sits just above the heap and below the rest of RAM the kernel reclaims.
+const RAMDISK_AT: u64 = mmu::RAM_BASE + (2 << 30);
 
 #[global_allocator]
 static HEAP: heap::Bump = heap::Bump::new();
@@ -176,9 +184,27 @@ extern "C" fn main() -> ! {
     // lives.
     let bundle_mem =
         unsafe { core::slice::from_raw_parts(BUNDLE_AT as *const u8, bundle_len as usize) };
-    let config = match Bundle::find(bundle_mem).map(|b| b.map(|b| (Config::read(&b), b.len))) {
+    let bundle = match Bundle::find(bundle_mem) {
+        None => None,
+        Some(Ok(b)) => Some(b),
+        Some(Err(e)) => {
+            log!("bad configuration bundle: {e}");
+            halt()
+        }
+    };
+
+    // A restore bundle boots the installer's restore OS in place of the
+    // installed system: Ambrosia does iBEC's part, placing the restore objects
+    // and entering the restore kernel, which runs its OS on the ramdisk so
+    // Apple's restored writes the guest's LocalPolicies. It carries no
+    // configuration, so this diverges before the configuration path below.
+    if let Some(bundle) = bundle.as_ref().filter(|b| restore::present(b)) {
+        restore_boot(bundle, ram_base, ram_end, heap_start, heap_end);
+    }
+
+    let config = match bundle.as_ref().map(|b| (Config::read(b), b.len)) {
         None => Config::default(),
-        Some(Ok((Ok(c), len))) => {
+        Some((Ok(c), len)) => {
             log!(
                 "configuration: {len} bytes, {} kexts, {} patches, graphics driver {}",
                 c.kexts.len(),
@@ -187,12 +213,8 @@ extern "C" fn main() -> ! {
             );
             c
         }
-        Some(Ok((Err(e), _))) => {
+        Some((Err(e), _)) => {
             log!("bad configuration: {e}");
-            halt()
-        }
-        Some(Err(e)) => {
-            log!("bad configuration bundle: {e}");
             halt()
         }
     };
@@ -282,6 +304,79 @@ extern "C" fn main() -> ! {
     let (start, high) = HEAP.used();
     mmu::clean(start as u64, (high - start) as u64);
     log!("entering the kernel at {:#x}", handoff.entry);
+    // SAFETY: the kernel is placed and its memory clean; this never returns.
+    unsafe { enter_kernel(handoff.entry, handoff.boot_args) }
+}
+
+/// Boots the installer's restore OS from a restore bundle. Ambrosia places the
+/// restore objects as iBEC would and enters the restore kernel; it reads no
+/// disk, applies no configuration, and never returns.
+fn restore_boot(
+    bundle: &Bundle<'_>,
+    ram_base: u64,
+    ram_end: u64,
+    heap_start: u64,
+    heap_end: u64,
+) -> ! {
+    // The ramdisk's loader object, from RAMDISK_AT to the end of RAM. Its IM4P
+    // header bounds the payload, so the slice need only cover it.
+    // SAFETY: mapped RAM above the heap, which nothing changes while the slice
+    // lives; prepare_restore reads it and writes the payload below the bundle,
+    // and the boot asks for each range while it holds no other slice of it.
+    let ramdisk = unsafe {
+        core::slice::from_raw_parts(
+            RAMDISK_AT as *const u8,
+            ram_end.saturating_sub(RAMDISK_AT) as usize,
+        )
+    };
+    let input = match restore::Input::from(bundle, ramdisk) {
+        Ok(i) => i,
+        Err(e) => {
+            log!("bad restore bundle: {e}");
+            halt()
+        }
+    };
+
+    let m = Machine {
+        ram_base,
+        ram_size: ram_end - ram_base,
+        pcie_window: PCIE_WINDOW,
+        cpus: cfg::nr_cpus(),
+        ecid: cfg::ecid(),
+        rnd: cfg::rnd(),
+        serial: cfg::serial(),
+        model: cfg::model(),
+        region: cfg::region(),
+        soc_name: cfg::soc_name(),
+        display: None,
+        display_node: None,
+        avp_rtc: avp_rtc(),
+    };
+    let seed = boot::seed(m.rnd, timer());
+    let mut ram = Ram {
+        start: ram_base,
+        end: ram_end,
+        kept: (BUNDLE_AT, heap_end.max(heap_start)),
+    };
+
+    // The kernel and every process run on these keys. The firmware uses no
+    // pointer authentication itself, so changing the keys under it is harmless.
+    keys::set(&boot::pac_keys(&seed));
+    let handoff =
+        match boot::prepare_restore(&m, &input, &mut ram, BUNDLE_AT, &seed, &mut |a| log!("{a}")) {
+            Ok(h) => h,
+            Err(e) => {
+                log!("restore boot failed: {e}");
+                halt()
+            }
+        };
+
+    for (start, len) in handoff.written {
+        mmu::clean(start, len);
+    }
+    let (start, high) = HEAP.used();
+    mmu::clean(start as u64, (high - start) as u64);
+    log!("entering the restore kernel at {:#x}", handoff.entry);
     // SAFETY: the kernel is placed and its memory clean; this never returns.
     unsafe { enter_kernel(handoff.entry, handoff.boot_args) }
 }
