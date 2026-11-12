@@ -531,6 +531,41 @@ state iBoot enters it:
 ambrosia: entering the kernel at 0x103920480
 ```
 
+## The restore boot
+
+When the bundle in RAM is a [restore bundle](restore.md), Ambrosia boots the
+installer's restore OS in place of the installed system. The path is a
+sibling of the one above, built from the bundle instead of the disks, and it
+reads no boot objects from the guest's volumes.
+
+The restore kernelcache and device tree are the installed system's own
+images, so the kernel-collection load, the [PAC nop pass](#the-pac-nop-pass)
+and the device-tree trimming are the same. What differs:
+
+- The [memory layout](#the-memory-layout) matches the installed system's — the
+  trust cache in the block below the collection, not above it — and the
+  ramdisk follows the boot arguments, below `topOfKernelData`, so the kernel
+  keeps it. The device tree names it `RAMDisk` in `/chosen/memory-map`, and
+  the boot arguments mount it with `rd=md0`.
+- The device tree keeps the `avp-ctrr` node a restore kernel reaches its OS
+  with, and leaves out the sealed-system-volume fields a ramdisk boot has
+  none of.
+- The device tree marks the boot a remote boot in `/chosen` — the boot
+  command, the boot type, the handoff type and the upgrade environment — so
+  the kernel's boot policy boots the ramdisk and skips an installed system's
+  local-policy evaluation.
+- There is no configuration: no patches and no kexts. The restore LocalPolicy
+  is signed by the production chain.
+- The guest's NVRAM is still read from the aux disk, since the restore OS
+  needs it.
+
+```text
+ambrosia: restore kernel collection: 216 entries, 0x4de4000 bytes at 0x100084000
+ambrosia: restore NVRAM: bank 0 of 2, generation 2
+ambrosia: ramdisk 0x16400000 bytes at 0x104e84000, trust cache at 0x10007c000
+ambrosia: entering the restore kernel at 0x102ecc480
+```
+
 ## The log
 
 Every line goes to the machine's UART, a PL011 at 0x20010000, starting

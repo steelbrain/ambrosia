@@ -180,6 +180,17 @@ Ambrosia makes the changes macOS needs itself
 ([boot process](boot-process.md#the-pac-nop-pass)), so the VMM needs no
 hook at kernel entry and leaves the guest's kernel alone.
 
+### A USB device controller, for a restore boot
+
+A [restore boot](restore.md) needs one more device: the USB device
+controller the restore OS reaches its host through. It is a virtio device on
+PCI, vendor 0x106b, device 0x1a01, class 0x0c03fe, configured with
+`-M vmapple,usb-port=<chardev>`, which carries the restore protocol to a
+stream socket. The restore kernel finds it by PCI enumeration, not from the
+device tree, so Ambrosia neither places nor touches a node for it. An
+installed-system boot does not use it, and a machine without it boots the
+installed system the same.
+
 ### The rest
 
 - **The GICv2m** sets bit 31 of `V2M_MSI_TYPER`, as macOS expects. From

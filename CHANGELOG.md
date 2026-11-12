@@ -7,6 +7,16 @@ release's image is published with the release.
 
 ## Unreleased
 
+- A restore bundle boots the installer's restore OS instead of the installed
+  system. When the bundle in RAM holds the restore objects — a restore
+  kernelcache, device tree and trust cache, the AP ticket, the LocalPolicy,
+  the nonce and the boot arguments, with the ramdisk on its own loader object
+  — Ambrosia places them as iBEC would, with the trust cache below the
+  collection and the ramdisk below the end of the kernel's data, names the
+  ramdisk `RAMDisk` in the device tree's memory map so the kernel mounts it as
+  `md0`, reads the guest's NVRAM from the aux disk, and enters the restore
+  kernel. It applies no configuration on this path. A restore boot needs a
+  machine with a USB device controller ([docs/restore.md](docs/restore.md)).
 - A `Kernel` > `Patch` can carry an `Expect`, the number of matches it must
   replace. The boot stops, with `Kernel.Patch for <id> replaced <n>
   matches, not the <expect> it requires`, when the patch replaces a

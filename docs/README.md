@@ -12,6 +12,8 @@
   it.
 - [The boot process](boot-process.md): from reset to the kernel, step by
   step.
+- [The restore boot](restore.md): booting the installer's restore OS from a
+  restore bundle, instead of the installed system.
 - [Graphics drivers](graphics-drivers.md): the driver module interface.
 
 ## How-to guides
