@@ -820,17 +820,18 @@ pub fn prepare(
 /// the installer's restore kernel, which mounts the ramdisk as `md0` and runs
 /// the restore OS, so Apple's `restored` writes the guest's LocalPolicies.
 ///
-/// The layout, upward from the start of RAM, differs from the installed
-/// system's: the trust cache starts exactly where the device tree ends, which
-/// macOS 27's restore kernel requires, and the ramdisk sits below the kernel's
-/// data, since the kernel frees the pages above `topOfKernelData`:
+/// The layout follows the installed system's, which the restore kernel checks
+/// the same way: the trust cache sits right below the collection (the kernel
+/// panics on one above it), and the ramdisk follows the boot arguments, below
+/// the end of the kernel's data, since the kernel frees the pages above
+/// `topOfKernelData`:
 ///
 /// | what | size |
 /// |---|---|
+/// | trust cache | its own, below the collection |
 /// | kernel collection | its span |
 /// | SEPFW (empty) | 16 KiB |
 /// | device tree | its own |
-/// | trust cache | its own, right after the tree |
 /// | boot arguments | 16 KiB |
 /// | ramdisk | its own |
 ///
@@ -904,12 +905,19 @@ pub fn prepare_restore(
         .checked_sub(fb_len)
         .ok_or(Error::Overflow("framebuffer below the panic log"))?;
 
-    // The kernel collection goes at the start of RAM, block-aligned there as
-    // iBoot's is, so its virtual and physical addresses agree modulo 32 MiB.
-    // Unlike the installed system, nothing rides below it: the trust cache
-    // sits after the device tree, not under the collection.
+    // The trust cache goes right below the collection, in its block, as the
+    // installed system's does: the kernel panics on a trust cache above the
+    // collection ("TrustCache region is in an unexpected place", arm_vm_init).
+    // So the collection goes at a random page in RAM's first 32 MiB that
+    // leaves room for the trust cache below it; a restore boot places no
+    // Auxiliary KC, so nothing else rides below the collection.
     let random = |at: usize| u64::from_le_bytes(seed[at..at + 8].try_into().unwrap());
-    let kc_at = phys_base;
+    let tc_room = page_up(tc.len() as u64).ok_or(Error::Overflow("trust cache"))?;
+    if tc_room >= BLOCK {
+        return Err(Error::NoRoom);
+    }
+    let kc_at = phys_base + tc_room + random(32) % ((BLOCK - tc_room) / PAGE) * PAGE;
+    let tc_at = kc_at - tc_room;
     let kc = mem.bytes(kc_at, kc_size as usize).ok_or(Error::NoRoom)?;
     input
         .kernelcache
@@ -998,11 +1006,9 @@ pub fn prepare_restore(
     let dt_len = page_up(sized.size() as u64).ok_or(Error::Overflow("device tree"))?;
     drop(sized);
 
-    // The trust cache starts where the tree ends; then the boot arguments, and
-    // the ramdisk below the end of the kernel's data.
-    let tc_at = dt_at + dt_len;
-    let tc_room = page_up(tc.len() as u64).ok_or(Error::Overflow("trust cache"))?;
-    let args_at = tc_at + tc_room;
+    // The boot arguments follow the device tree, then the ramdisk, below the
+    // end of the kernel's data, which the kernel frees above.
+    let args_at = dt_at + dt_len;
     let rd_at = args_at + PAGE;
     let rd_room = page_up(rd_size).ok_or(Error::Overflow("ramdisk"))?;
     let top = rd_at

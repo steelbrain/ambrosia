@@ -173,16 +173,23 @@ fn prepares_a_real_restore_boot() {
     let mm = dt
         .find("chosen/memory-map")
         .expect("the tree has a memory map");
-    let (dt_at, dt_region) = mm_range(mm, "DeviceTree");
-    let (tc_at, _tc_len) = mm_range(mm, "TrustCache");
+    let (dt_mm_at, _dt_region) = mm_range(mm, "DeviceTree");
+    let (tc_at, tc_region) = mm_range(mm, "TrustCache");
+    let (kc_at, _) = mm_range(mm, "BootKC-ro");
     let (rd_at, rd_len) = mm_range(mm, "RAMDisk");
 
-    // macOS 27's restore kernel requires the trust cache to start where the
-    // device tree ends.
+    // The memory map places the device tree where the boot arguments point.
     assert_eq!(
-        tc_at,
-        dt_at + dt_region,
-        "trust cache starts where tree ends"
+        dt_mm_at, dt_phys,
+        "device tree memory-map matches boot-args"
+    );
+    // The restore kernel requires the trust cache directly below the
+    // collection, as the installed system's is; it panics on one above it.
+    assert!(tc_at < kc_at, "trust cache below the collection");
+    assert_eq!(
+        tc_at + tc_region,
+        kc_at,
+        "trust cache directly below the collection"
     );
     // The ramdisk ends below the end of the kernel's data, which the kernel
     // frees above.
