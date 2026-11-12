@@ -4,9 +4,63 @@
 //! ramdisk, loaded on its own); without it the test is skipped. The bytes are
 //! the user's own IPSW, so they live outside the tree.
 
+use ambrosia::adt::Node;
+use ambrosia::boot::{self, Memory};
 use ambrosia::bundle::Bundle;
 use ambrosia::img4::Packing;
 use ambrosia::restore::{self, Input};
+use ambrosia::tree::Machine;
+
+/// Guest RAM as two sparse regions: the kernel's static memory from the base,
+/// and the carveouts at the top.
+struct Ram {
+    base: u64,
+    low: Vec<u8>,
+    high_at: u64,
+    high: Vec<u8>,
+}
+
+impl Memory for Ram {
+    fn bytes(&mut self, pa: u64, len: usize) -> Option<&mut [u8]> {
+        let end = pa.checked_add(len as u64)?;
+        for (at, mem) in [(self.base, &mut self.low), (self.high_at, &mut self.high)] {
+            if pa >= at && end <= at + mem.len() as u64 {
+                let o = (pa - at) as usize;
+                return Some(&mut mem[o..o + len]);
+            }
+        }
+        None
+    }
+}
+
+/// The vmapple machine the restore boot runs on: RAM at 4 GiB, as the firmware
+/// gives it.
+fn machine() -> Machine {
+    Machine {
+        ram_base: 0x1_0000_0000,
+        ram_size: 0x2_0000_0000,
+        pcie_window: (0x5000_0000, 0x1fff_0000),
+        cpus: 4,
+        ecid: 0x1234_5678_9abc_def0,
+        rnd: 0x6a5a_78a3,
+        serial: "1234".into(),
+        model: "VM0001".into(),
+        region: "D/A".into(),
+        soc_name: "Apple M1 (Virtual)".into(),
+        display: None,
+        display_node: None,
+        avp_rtc: true,
+    }
+}
+
+/// A 16-byte memory-map range as `(address, size)`.
+fn mm_range(mm: &Node, name: &str) -> (u64, u64) {
+    let r = mm
+        .get(name)
+        .unwrap_or_else(|| panic!("memory-map has no {name}"));
+    let n = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
+    (n(0), n(8))
+}
 
 #[test]
 fn reads_a_real_restore_bundle() {
@@ -51,4 +105,95 @@ fn reads_a_real_restore_bundle() {
     assert!(input.boot_args.contains("rd=md0"));
     assert!(!input.apticket.is_empty());
     assert!(!input.policy.is_empty());
+}
+
+#[test]
+fn prepares_a_real_restore_boot() {
+    let Ok(dir) = std::env::var("AMBROSIA_TEST_RESTORE") else {
+        eprintln!("AMBROSIA_TEST_RESTORE is unset; skipping");
+        return;
+    };
+    let archive = std::fs::read(format!("{dir}/restore.cpio")).unwrap();
+    let ramdisk = std::fs::read(format!("{dir}/restore-ramdisk.im4p")).unwrap();
+    let bundle = Bundle::find(&archive).unwrap().unwrap();
+    let input = Input::from(&bundle, &ramdisk).unwrap();
+
+    let m = machine();
+    // The firmware loads the bundle at RAM_BASE + 512 MiB; the kernel's static
+    // memory must end below it. The carveouts sit at the top of RAM.
+    let limit = m.ram_base + (512 << 20);
+    let mut ram = Ram {
+        base: m.ram_base,
+        low: vec![0u8; (limit - m.ram_base) as usize],
+        high_at: m.ram_base + m.ram_size - (8 << 20),
+        high: vec![0u8; 8 << 20],
+    };
+    let seed = boot::seed(m.rnd, 1);
+    let mut log: Vec<String> = Vec::new();
+    let handoff = boot::prepare_restore(&m, &input, &mut ram, limit, &seed, &mut |a| {
+        log.push(format!("{a}"));
+    })
+    .unwrap();
+    for line in &log {
+        eprintln!("{line}");
+    }
+
+    // The entry is inside the placed kernel collection.
+    let kc_size = input.kernelcache.size.unwrap() as u64;
+    assert!(handoff.entry >= m.ram_base && handoff.entry < m.ram_base + kc_size);
+
+    // Read the boot arguments back from where they were placed.
+    let ba = handoff.boot_args;
+    let read_u64 = |ram: &mut Ram, pa: u64| -> u64 {
+        u64::from_le_bytes(ram.bytes(pa, 8).unwrap()[..8].try_into().unwrap())
+    };
+    let read_u32 = |ram: &mut Ram, pa: u64| -> u32 {
+        u32::from_le_bytes(ram.bytes(pa, 4).unwrap()[..4].try_into().unwrap())
+    };
+    let virt_base = read_u64(&mut ram, ba + 8);
+    let phys_base = read_u64(&mut ram, ba + 16);
+    let top = read_u64(&mut ram, ba + 32);
+    let dt_virt = read_u64(&mut ram, ba + 96);
+    let dt_len = u64::from(read_u32(&mut ram, ba + 104));
+    assert_eq!(phys_base, m.ram_base);
+    let dt_phys = dt_virt - virt_base + phys_base;
+
+    // The command line is the restore boot-args.
+    let cl = {
+        let b = ram.bytes(ba + 108, 256).unwrap();
+        let end = b.iter().position(|&c| c == 0).unwrap();
+        String::from_utf8(b[..end].to_vec()).unwrap()
+    };
+    assert_eq!(cl, input.boot_args);
+    assert!(cl.contains("rd=md0"));
+
+    // Parse the placed device tree and check the restore layout invariants.
+    let dt_bytes = ram.bytes(dt_phys, dt_len as usize).unwrap().to_vec();
+    let (dt, _) = Node::parse(&dt_bytes).unwrap();
+    let mm = dt
+        .find("chosen/memory-map")
+        .expect("the tree has a memory map");
+    let (dt_at, dt_region) = mm_range(mm, "DeviceTree");
+    let (tc_at, _tc_len) = mm_range(mm, "TrustCache");
+    let (rd_at, rd_len) = mm_range(mm, "RAMDisk");
+
+    // macOS 27's restore kernel requires the trust cache to start where the
+    // device tree ends.
+    assert_eq!(
+        tc_at,
+        dt_at + dt_region,
+        "trust cache starts where tree ends"
+    );
+    // The ramdisk ends below the end of the kernel's data, which the kernel
+    // frees above.
+    assert!(rd_at + rd_len <= top, "ramdisk below topOfKernelData");
+    // The ramdisk's bytes are the raw APFS container: its superblock magic
+    // `NXSB` sits at offset 0x20.
+    assert_eq!(&ram.bytes(rd_at + 0x20, 4).unwrap()[..4], b"NXSB");
+
+    // The restore boot keeps the CTRR node the installed system removes.
+    assert!(
+        dt.find("arm-io/avp-ctrr").is_some(),
+        "restore keeps avp-ctrr"
+    );
 }

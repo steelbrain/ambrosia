@@ -118,6 +118,10 @@ pub struct Placement {
     /// A boot-placed Auxiliary KC, below the Boot KC, advertised as
     /// `/chosen/memory-map/AuxKC-mach_header`. Zero size when none.
     pub aux_kc: (u64, u64),
+    /// The restore ramdisk, advertised as `/chosen/memory-map/RAMDisk` so the
+    /// restore kernel mounts it as `md0`. Zero size on an installed-system
+    /// boot, which places no ramdisk.
+    pub ramdisk: (u64, u64),
 }
 
 /// Why the template couldn't be filled in.
@@ -443,6 +447,14 @@ pub struct PlacedKext<'a> {
 /// Fills in `tree`, the template, for this machine and these objects. `placed`
 /// is the kexts Ambrosia placed, empty for a plain guest, which it records in
 /// `/chosen/ambrosia` for injected code to read back from the device tree.
+/// `restore` fills it for a restore boot instead of an installed-system one:
+/// it keeps the `avp-ctrr` node, leaves out the sealed-system-volume fields
+/// the ramdisk boot has none of, and names the ramdisk in the memory map
+/// (through `at`). Its objects are the restore manifest and policy, and its
+/// root hashes are empty.
+// Each argument is a distinct input the fill needs; grouping them would not
+// make the call clearer.
+#[allow(clippy::too_many_arguments)]
 pub fn populate(
     tree: &mut Node,
     m: &Machine,
@@ -451,6 +463,7 @@ pub fn populate(
     placed: &[PlacedKext<'_>],
     vtables: &[crate::vtdisc::Table],
     seed: &[u8; 48],
+    restore: bool,
 ) -> Result<(), Error> {
     let manifest = Manifest::parse(o.manifest)?;
     let policy = Manifest::parse(o.policy)?;
@@ -459,7 +472,15 @@ pub fn populate(
     fill_directives(tree, m)?;
     tree.set("platform-name", &padded("vmapple2", 32));
 
-    chosen(find(tree, "/chosen")?, m, o, &manifest, &boot_hash, seed)?;
+    chosen(
+        find(tree, "/chosen")?,
+        m,
+        o,
+        &manifest,
+        &boot_hash,
+        seed,
+        restore,
+    )?;
     copy_properties(
         find(tree, "/chosen/manifest-properties")?,
         manifest.entry(b"MANP"),
@@ -485,7 +506,9 @@ pub fn populate(
     cpus.children
         .retain(|c| c.get_u32("cpu-id").is_some_and(|id| id < m.cpus));
 
-    arm_io(find(tree, "/arm-io")?, m)?;
+    // A restore boot keeps avp-ctrr; an installed-system boot has no CTRR
+    // device and removes it.
+    arm_io(find(tree, "/arm-io")?, m, restore)?;
     find(tree, "/pram")?.set("reg", &range(at.pram));
     find(tree, "/vram")?.set("reg", &range(at.vram));
     let product = find(tree, "/product")?;
@@ -542,6 +565,7 @@ fn chosen(
     manifest: &Manifest<'_>,
     boot_hash: &[u8; 48],
     seed: &[u8; 48],
+    restore: bool,
 ) -> Result<(), Error> {
     let chip = manifest_u32(manifest, b"CHIP", 0xfe00);
     let board = manifest_u32(manifest, b"BORD", 0x20);
@@ -589,15 +613,19 @@ fn chosen(
     c.set("cl4-entropy", &random[256..]);
     c.set("boot-nonce", &repeated(m.rnd, 8));
 
-    c.set_str("apfs-preboot-uuid", o.volume_group);
-    c.set_str("boot-uuid", o.volume_group);
-    c.set_str(
-        "boot-objects-path",
-        &format!("/{}/boot/{}", o.volume_group, o.boot_dir),
-    );
     c.set("boot-manifest-hash", boot_hash);
-    c.set("system-volume-auth-blob", o.root_hash);
-    c.set_str("root-snapshot-name", &root_snapshot(o.root_hash)?);
+    // The sealed-system-volume fields, which a restore boot has none of: it
+    // boots the ramdisk as `md0`, not a snapshot of a signed system volume.
+    if !restore {
+        c.set_str("apfs-preboot-uuid", o.volume_group);
+        c.set_str("boot-uuid", o.volume_group);
+        c.set_str(
+            "boot-objects-path",
+            &format!("/{}/boot/{}", o.volume_group, o.boot_dir),
+        );
+        c.set("system-volume-auth-blob", o.root_hash);
+        c.set_str("root-snapshot-name", &root_snapshot(o.root_hash)?);
+    }
 
     c.set_u32("nvram-bank-size", o.nvram_bank_size);
     c.set_u32("nvram-bank-count", o.nvram_banks);
@@ -759,6 +787,12 @@ fn memory_map(mm: &mut Node, at: &Placement) {
         mm.set("AuxKC", &range(at.aux_kc));
         mm.set("AuxKC-mach_header", &range(at.aux_kc));
     }
+    // The restore ramdisk, when a restore boot placed one. The restore kernel
+    // reads this region and mounts it as `md0`, the root `rd=md0` names. An
+    // installed-system boot places none, so the entry stays absent.
+    if at.ramdisk.1 != 0 {
+        mm.set("RAMDisk", &range(at.ramdisk));
+    }
 }
 
 /// `/chosen/carveout-memory-map`: the carveouts Ambrosia keeps from the
@@ -776,20 +810,25 @@ fn carveouts(cmm: &mut Node, at: &Placement) {
     }
 }
 
-/// `/arm-io`: the devices the machine has, and its PCIe window.
-fn arm_io(io: &mut Node, m: &Machine) -> Result<(), Error> {
+/// `/arm-io`: the devices the machine has, and its PCIe window. `keep_ctrr`
+/// leaves the `avp-ctrr` node in place for a restore boot, where the restore
+/// kernel reaches its restore OS with it; an installed-system boot removes it,
+/// since the machine has no CTRR device and the kernel then skips the lockdown.
+fn arm_io(io: &mut Node, m: &Machine, keep_ctrr: bool) -> Result<(), Error> {
     // The tree lists the devices the machine has. Ambrosia supports none of
     // Apple's paravirtual devices, so the paravirtual display and its
     // IOSurface mapper go (docs/machine.md). The tree keeps one clock, as
     // iBoot does: avp-rtc, the one macOS keeps its offset to calendar time
     // with, if the machine has it, and otherwise the PL031. Templates before
-    // 14's have only the PL031, named rtc, and keep it. The machine has no
-    // CTRR device, which Virtualization.framework's has; the kernel then
-    // skips the lockdown. avp-sealed-registers stays, though the machine has
-    // none: without the node, 27.0.1 doesn't reach userspace's network.
+    // 14's have only the PL031, named rtc, and keep it. avp-sealed-registers
+    // stays, though the machine has none: without the node, 27.0.1 doesn't
+    // reach userspace's network.
     let other_clock = if m.avp_rtc { "pl031-rtc" } else { "avp-rtc" };
-    for name in ["gfx", "iosurface-mapper", other_clock, "avp-ctrr"] {
+    for name in ["gfx", "iosurface-mapper", other_clock] {
         io.remove_child(name);
+    }
+    if !keep_ctrr {
+        io.remove_child("avp-ctrr");
     }
     for name in ["fuse-revision", "tunable-revision", "chip-config-rack"] {
         io.set_u32(name, 0);
@@ -1060,6 +1099,37 @@ mod tests {
         }
     }
 
+    /// A restore boot keeps avp-ctrr; an installed-system boot removes it.
+    /// Both remove the paravirtual display and its IOSurface mapper.
+    #[test]
+    fn restore_keeps_avp_ctrr() {
+        let with_devices = || {
+            let mut io = arm_io();
+            for name in ["gfx", "iosurface-mapper", "avp-ctrr"] {
+                let mut n = Node::default();
+                n.set_str("name", name);
+                io.children.push(n);
+            }
+            io
+        };
+        let m = machine();
+
+        let mut installed = with_devices();
+        super::arm_io(&mut installed, &m, false).unwrap();
+        assert!(installed.child("gfx").is_none());
+        assert!(installed.child("iosurface-mapper").is_none());
+        assert!(installed.child("avp-ctrr").is_none());
+
+        let mut restore = with_devices();
+        super::arm_io(&mut restore, &m, true).unwrap();
+        assert!(restore.child("gfx").is_none());
+        assert!(restore.child("iosurface-mapper").is_none());
+        assert!(
+            restore.child("avp-ctrr").is_some(),
+            "restore keeps avp-ctrr"
+        );
+    }
+
     /// The display's node is added only when there is a display and the
     /// configuration names one, and never over a node arm-io has.
     #[test]
@@ -1076,7 +1146,7 @@ mod tests {
             ..machine()
         };
         let mut io = arm_io();
-        super::arm_io(&mut io, &named).unwrap();
+        super::arm_io(&mut io, &named, false).unwrap();
         assert!(io.child("display0").is_none(), "no display, no node");
 
         let m = Machine {
@@ -1084,7 +1154,7 @@ mod tests {
             ..named
         };
         let mut io = arm_io();
-        super::arm_io(&mut io, &m).unwrap();
+        super::arm_io(&mut io, &m, false).unwrap();
         let node = io.child("display0").unwrap();
         assert_eq!(node.get("name"), Some(&b"display0\0"[..]));
         assert_eq!(node.get("device_type"), Some(&b"display-subsystem\0"[..]));
@@ -1095,7 +1165,7 @@ mod tests {
             display_node: None,
             ..m.clone()
         };
-        super::arm_io(&mut io, &unnamed).unwrap();
+        super::arm_io(&mut io, &unnamed, false).unwrap();
         assert_eq!(io.children.len(), 1, "only pcie");
 
         let mut io = arm_io();
@@ -1103,7 +1173,10 @@ mod tests {
             display_node: Some("pcie".into()),
             ..m
         };
-        assert_eq!(super::arm_io(&mut io, &pcie), Err(Error::DisplayNodeTaken));
+        assert_eq!(
+            super::arm_io(&mut io, &pcie, false),
+            Err(Error::DisplayNodeTaken)
+        );
     }
 
     /// The memory map's size depends on whether an AuxKC is placed, not on

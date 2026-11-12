@@ -554,6 +554,7 @@ pub fn prepare(
         &sizing_kexts,
         &vtables,
         seed,
+        false,
     )
     .map_err(Error::Populate)?;
     let dt_len = page_up(sized.size() as u64).ok_or(Error::Overflow("device tree"))?;
@@ -755,8 +756,10 @@ pub fn prepare(
             Some(aux) => (aux_at, aux.len() as u64),
             None => (0, 0),
         },
+        ramdisk: (0, 0),
     };
-    tree::populate(&mut dt, m, &objects, &at, &placed, &vtables, seed).map_err(Error::Populate)?;
+    tree::populate(&mut dt, m, &objects, &at, &placed, &vtables, seed, false)
+        .map_err(Error::Populate)?;
     let dt_bytes = dt.serialize();
     let dt_mem = mem.bytes(dt_at, dt_len as usize).ok_or(Error::NoRoom)?;
     dt_mem.fill(0);
@@ -797,6 +800,294 @@ pub fn prepare(
     args_mem.fill(0);
     args.write(
         &config.command_line,
+        (&mut args_mem[..bootargs::SIZE]).try_into().unwrap(),
+    );
+    log(format_args!(
+        "physBase {phys_base:#x} virtBase {virt_base:#x} top {top:#x} memSize {:#x} slide {slide:#x}",
+        args.mem_size
+    ));
+
+    Ok(Handoff {
+        entry: entry_pa,
+        boot_args: args_at,
+        written: [(phys_base, top - phys_base), (vram_at, ram_end - vram_at)],
+    })
+}
+
+/// Places everything for the restore kernel, below `limit`, and gives the
+/// handoff. A restore boot has no configuration: no patches, no kexts, no
+/// NVRAM from a disk. It lays the restore objects out as iBEC would and enters
+/// the installer's restore kernel, which mounts the ramdisk as `md0` and runs
+/// the restore OS, so Apple's `restored` writes the guest's LocalPolicies.
+///
+/// The layout, upward from the start of RAM, differs from the installed
+/// system's: the trust cache starts exactly where the device tree ends, which
+/// macOS 27's restore kernel requires, and the ramdisk sits below the kernel's
+/// data, since the kernel frees the pages above `topOfKernelData`:
+///
+/// | what | size |
+/// |---|---|
+/// | kernel collection | its span |
+/// | SEPFW (empty) | 16 KiB |
+/// | device tree | its own |
+/// | trust cache | its own, right after the tree |
+/// | boot arguments | 16 KiB |
+/// | ramdisk | its own |
+///
+/// `limit` is the bundle's address: the kernel's static memory must end below
+/// it, since the restore objects are read from the bundle as they are placed.
+pub fn prepare_restore(
+    m: &Machine,
+    input: &crate::restore::Input<'_>,
+    mem: &mut impl Memory,
+    limit: u64,
+    seed: &[u8; 48],
+    log: &mut dyn FnMut(fmt::Arguments<'_>),
+) -> Result<Handoff, Error> {
+    let ram_end = m.ram_base + m.ram_size;
+    let phys_base = m.ram_base;
+
+    let template = input
+        .device_tree
+        .unpack()
+        .map_err(|e| Error::Image("restore devicetree", e))?;
+    let (mut dt, _) = Node::parse(&template).map_err(Error::Tree)?;
+    let policy = img4::parse_img4(input.policy)
+        .map_err(|e| Error::Image("restore policy", e))?
+        .manifest
+        .ok_or(Error::NoManifest("restore policy"))?;
+    let tc = trust_caches(&[input
+        .trust_cache
+        .unpack()
+        .map_err(|e| Error::Image("restore trustcache", e))?
+        .as_slice()]);
+
+    let kc_size = input
+        .kernelcache
+        .size
+        .ok_or(Error::Image("restore kernelcache", img4::Error::BadSize))? as u64;
+    let rd_size = input
+        .ramdisk
+        .size
+        .ok_or(Error::Image("restore ramdisk", img4::Error::BadSize))? as u64;
+
+    // The restore manifest is the AP ticket; it is also the SFR manifest in a
+    // restore boot. The restore boot has no sealed system volume, so its root
+    // hashes are empty.
+    let objects = Objects {
+        volume_group: "",
+        boot_dir: "",
+        manifest: input.apticket,
+        policy,
+        sfr_manifest: input.apticket,
+        root_hash: &[],
+        base_root_hash: &[],
+        nvram: &[],
+        nvram_bank: 0,
+        nvram_banks: NVRAM_BANKS as u32,
+        nvram_bank_size: 0,
+    };
+
+    // The carveouts at the top of RAM: the manifests, the panic log, then the
+    // framebuffer. The kernel's memory ends below them.
+    let manifests = [input.apticket, policy, input.apticket];
+    let manifests_len = page_up(manifests.iter().map(|x| x.len() as u64 + 64).sum())
+        .ok_or(Error::Overflow("manifests region"))?;
+    let manifests_at = ram_end
+        .checked_sub(manifests_len)
+        .ok_or(Error::Overflow("manifests region below RAM end"))?;
+    let pram_at = manifests_at
+        .checked_sub(tree::PRAM_SIZE)
+        .ok_or(Error::Overflow("panic log below the manifests"))?;
+    let fb_len = page_up(FB_WIDTH * 4 * FB_HEIGHT).ok_or(Error::Overflow("framebuffer"))?;
+    let vram_at = pram_at
+        .checked_sub(fb_len)
+        .ok_or(Error::Overflow("framebuffer below the panic log"))?;
+
+    // The kernel collection goes at the start of RAM, block-aligned there as
+    // iBoot's is, so its virtual and physical addresses agree modulo 32 MiB.
+    // Unlike the installed system, nothing rides below it: the trust cache
+    // sits after the device tree, not under the collection.
+    let random = |at: usize| u64::from_le_bytes(seed[at..at + 8].try_into().unwrap());
+    let kc_at = phys_base;
+    let kc = mem.bytes(kc_at, kc_size as usize).ok_or(Error::NoRoom)?;
+    input
+        .kernelcache
+        .unpack_into(kc)
+        .map_err(|e| Error::Image("restore kernelcache", e))?;
+    let h = Header::parse(kc).map_err(Error::Kernel)?;
+    let (lo, _) = h.vm_range();
+    log(format_args!(
+        "restore kernel collection: {} entries, {:#x} bytes at {:#x}",
+        h.entries.len(),
+        kc_size,
+        kc_at
+    ));
+
+    // KASLR: a slide from 32 MiB to 512 MiB, of 16 KiB pages, that puts the
+    // collection's virtual address where its physical one is in its block.
+    let slide = kc_at.wrapping_sub(lo) % BLOCK + (1 + random(40) % 15) * BLOCK;
+    let kc_virt = lo + slide;
+    let virt_base = kc_virt - (kc_at - phys_base);
+
+    // The PAC spins are in the collection's executable segments, as the
+    // installed system's are.
+    let mut spins = 0;
+    for s in h.segments.iter().filter(|s| s.initprot & 4 != 0) {
+        let Some(at) = s.vmaddr.checked_sub(lo).map(|a| a as usize) else {
+            continue;
+        };
+        if let Some(code) = at
+            .checked_add(s.vmsize as usize)
+            .and_then(|end| kc.get_mut(at..end))
+        {
+            spins += pac::skip_spins(code);
+        }
+    }
+    log(format_args!("{spins} PAC spins made nops"));
+
+    let entry = h.entry.ok_or(Error::Kernel(macho::Error::NoEntry))?;
+    let entry_pa = kc_at
+        .checked_add(
+            entry
+                .checked_sub(lo)
+                .ok_or(Error::Overflow("entry below the collection"))?,
+        )
+        .ok_or(Error::Overflow("entry above RAM"))?;
+
+    // The kernel collection's parts, as the memory map gives them.
+    let first_rw = h
+        .segments
+        .iter()
+        .filter(|s| s.initprot & 2 != 0)
+        .map(|s| s.vmaddr)
+        .min()
+        .unwrap_or(lo);
+    let le = h
+        .segment("__LINKEDIT")
+        .map(|s| (s.vmaddr, s.vmsize))
+        .unwrap_or((lo.saturating_add(kc_size), 0));
+    let pa = |va: u64| {
+        kc_at
+            .checked_add(
+                va.checked_sub(lo)
+                    .ok_or(Error::Overflow("address below the collection"))?,
+            )
+            .ok_or(Error::Overflow("address above RAM"))
+    };
+    let kc_rw_size =
+        le.0.checked_sub(first_rw)
+            .ok_or(Error::Overflow("__LINKEDIT below the writable segments"))?;
+    let (kc_rw_pa, kc_le_pa) = (pa(first_rw)?, pa(le.0)?);
+
+    let sepfw_at = kc_at
+        .checked_add(page_up(kc_size).ok_or(Error::Overflow("kernel collection size"))?)
+        .ok_or(Error::Overflow("kernel collection end"))?;
+    let dt_at = sepfw_at + PAGE;
+
+    // Measure the device tree, filled as it will be, so the trust cache can
+    // start exactly where it ends. The memory map names the ramdisk, so the
+    // placeholder has a ramdisk for the size to match.
+    let mut sized = dt.clone();
+    let placeholder = Placement {
+        ramdisk: (0, rd_size),
+        ..Placement::default()
+    };
+    tree::populate(&mut sized, m, &objects, &placeholder, &[], &[], seed, true)
+        .map_err(Error::Populate)?;
+    let dt_len = page_up(sized.size() as u64).ok_or(Error::Overflow("device tree"))?;
+    drop(sized);
+
+    // The trust cache starts where the tree ends; then the boot arguments, and
+    // the ramdisk below the end of the kernel's data.
+    let tc_at = dt_at + dt_len;
+    let tc_room = page_up(tc.len() as u64).ok_or(Error::Overflow("trust cache"))?;
+    let args_at = tc_at + tc_room;
+    let rd_at = args_at + PAGE;
+    let rd_room = page_up(rd_size).ok_or(Error::Overflow("ramdisk"))?;
+    let top = rd_at
+        .checked_add(rd_room)
+        .ok_or(Error::Overflow("ramdisk end"))?;
+    if top > limit || top > vram_at {
+        return Err(Error::NoRoom);
+    }
+
+    // The manifests, 64-byte aligned in their carveout.
+    let mut man_at = manifests_at;
+    let mut man_ranges = [(0, 0); 3];
+    for (i, man) in manifests.iter().enumerate() {
+        write(mem, man_at, man)?;
+        man_ranges[i] = (man_at, man.len() as u64);
+        man_at = (man_at + man.len() as u64).next_multiple_of(64);
+    }
+
+    let at = Placement {
+        device_tree: (dt_at, dt_len),
+        trust_cache: (tc_at, tc_room),
+        boot_args: (args_at, PAGE),
+        sepfw: (sepfw_at, 0x2000),
+        kc_ro: (kc_at, first_rw - lo),
+        kc_rw: (kc_rw_pa, kc_rw_size),
+        kc_le: (kc_le_pa, le.1),
+        kc_entry: entry + slide,
+        kc_virt,
+        manifest: man_ranges[0],
+        policy: man_ranges[1],
+        sfr_manifest: man_ranges[2],
+        manifests_region: (manifests_at, manifests_len),
+        pram: (pram_at, tree::PRAM_SIZE),
+        vram: (vram_at, fb_len),
+        kernel_memory: (phys_base, vram_at - phys_base),
+        aux_kc: (0, 0),
+        ramdisk: (rd_at, rd_room),
+    };
+    tree::populate(&mut dt, m, &objects, &at, &[], &[], seed, true).map_err(Error::Populate)?;
+    let dt_bytes = dt.serialize();
+    let dt_mem = mem.bytes(dt_at, dt_len as usize).ok_or(Error::NoRoom)?;
+    dt_mem.fill(0);
+    dt_mem
+        .get_mut(..dt_bytes.len())
+        .ok_or(Error::Overflow("device tree larger than measured"))?
+        .copy_from_slice(&dt_bytes);
+
+    let tc_mem = mem.bytes(tc_at, tc_room as usize).ok_or(Error::NoRoom)?;
+    tc_mem.fill(0);
+    tc_mem[..tc.len()].copy_from_slice(&tc);
+    mem.bytes(sepfw_at, PAGE as usize)
+        .ok_or(Error::NoRoom)?
+        .fill(0);
+    mem.bytes(vram_at, fb_len as usize)
+        .ok_or(Error::NoRoom)?
+        .fill(0);
+    mem.bytes(pram_at, tree::PRAM_SIZE as usize)
+        .ok_or(Error::NoRoom)?
+        .fill(0);
+
+    // The ramdisk, unpacked where the kernel mounts it from.
+    let rd_mem = mem.bytes(rd_at, rd_size as usize).ok_or(Error::NoRoom)?;
+    input
+        .ramdisk
+        .unpack_into(rd_mem)
+        .map_err(|e| Error::Image("restore ramdisk", e))?;
+    log(format_args!(
+        "ramdisk {rd_size:#x} bytes at {rd_at:#x}, trust cache at {tc_at:#x}"
+    ));
+
+    let args = BootArgs {
+        virt_base,
+        phys_base,
+        mem_size: vram_at - phys_base,
+        top_of_kernel_data: top,
+        video: video(m.display.as_ref(), vram_at),
+        machine_type: 0,
+        device_tree: virt_base + (dt_at - phys_base),
+        device_tree_length: dt_len as u32,
+        mem_size_actual: m.ram_size,
+    };
+    let args_mem = mem.bytes(args_at, PAGE as usize).ok_or(Error::NoRoom)?;
+    args_mem.fill(0);
+    args.write(
+        input.boot_args,
         (&mut args_mem[..bootargs::SIZE]).try_into().unwrap(),
     );
     log(format_args!(
