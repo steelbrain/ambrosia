@@ -875,27 +875,20 @@ pub fn prepare_restore(
         .size
         .ok_or(Error::Image("restore ramdisk", img4::Error::BadSize))? as u64;
 
-    // The guest's NVRAM: the current bank from the aux disk, or an empty bank
-    // of the region's bank size when the aux has no valid bank yet, as a
-    // never-booted guest's is. The restore kernel panics if its NVRAM is zero
-    // bytes, and the restore OS clears and rewrites NVRAM from here.
+    // The guest's NVRAM: the current bank from the aux disk, as the installed
+    // boot reads it. The restore OS clears and rewrites NVRAM from here. A blank
+    // aux has no valid bank; rather than hand the kernel an unparseable one (its
+    // NVRAM parser walks the bank's partitions and faults on a zeroed one), the
+    // boot stops, as the installed path does. The restore tooling writes a valid
+    // bank to the aux before the restore boot.
     let banks = NVRAM_BANKS;
-    let (nvram_data, nvram_bank) = match crate::nvram::current(nvram_region, banks) {
-        Some(bank) => {
-            log(format_args!(
-                "restore NVRAM: bank {} of {banks}, generation {}",
-                bank.index, bank.generation
-            ));
-            (bank.data.to_vec(), bank.index)
-        }
-        None => {
-            let size = nvram_region.len() / banks.max(1);
-            log(format_args!(
-                "restore NVRAM: no valid bank, an empty bank of {size:#x} bytes"
-            ));
-            (alloc::vec![0u8; size], 0)
-        }
-    };
+    let nvram = crate::nvram::current(nvram_region, banks).ok_or(Error::NoNvram)?;
+    log(format_args!(
+        "restore NVRAM: bank {} of {banks}, generation {}",
+        nvram.index, nvram.generation
+    ));
+    let nvram_data = nvram.data.to_vec();
+    let nvram_bank = nvram.index;
 
     // The restore manifest is the AP ticket; it is also the SFR manifest in a
     // restore boot. The restore boot has no sealed system volume, so its root

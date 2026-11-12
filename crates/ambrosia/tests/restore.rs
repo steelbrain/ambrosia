@@ -53,6 +53,31 @@ fn machine() -> Machine {
     }
 }
 
+/// A valid NVRAM bank of `size` bytes with the given generation: the header
+/// partition's signature and magic, the generation at +0x14, and an Adler-32
+/// over the bytes from +0x14 on at +0x10, as the aux drive holds a bank.
+fn nvram_bank(size: usize, generation: u32) -> Vec<u8> {
+    fn adler32(data: &[u8]) -> u32 {
+        let (mut a, mut b) = (1u32, 0u32);
+        for chunk in data.chunks(5552) {
+            for &x in chunk {
+                a += u32::from(x);
+                b += a;
+            }
+            a %= 65521;
+            b %= 65521;
+        }
+        (b << 16) | a
+    }
+    let mut v = vec![0u8; size];
+    v[0] = 0x5a;
+    v[4..9].copy_from_slice(b"nvram");
+    v[0x14..0x18].copy_from_slice(&generation.to_le_bytes());
+    let sum = adler32(&v[0x14..]);
+    v[0x10..0x14].copy_from_slice(&sum.to_le_bytes());
+    v
+}
+
 /// A 16-byte memory-map range as `(address, size)`.
 fn mm_range(mm: &Node, name: &str) -> (u64, u64) {
     let r = mm
@@ -129,9 +154,11 @@ fn prepares_a_real_restore_boot() {
         high: vec![0u8; 8 << 20],
     };
     let seed = boot::seed(m.rnd, 1);
-    // A blank NVRAM region, as a never-booted guest's aux is: 64 KiB of two
-    // 32 KiB banks, neither valid, so the restore boot gives an empty bank.
-    let nvram_region = vec![0u8; 0x10000];
+    // The guest's NVRAM: 64 KiB of two 32 KiB banks, the second current. The
+    // restore boot reads the current bank and hands it to the kernel, as the
+    // installed boot does.
+    let mut nvram_region = nvram_bank(0x8000, 3);
+    nvram_region.extend(nvram_bank(0x8000, 7));
     let mut log: Vec<String> = Vec::new();
     let handoff = boot::prepare_restore(
         &m,
@@ -218,11 +245,12 @@ fn prepares_a_real_restore_boot() {
     // The entry is inside the placed collection.
     assert!(handoff.entry >= kc_at && handoff.entry < kc_at + kc_size);
 
-    // A blank aux gives an empty bank of the region's bank size, so the
-    // kernel's NVRAM is never zero bytes.
+    // The current bank of the aux's NVRAM is handed to the kernel: the second,
+    // with the higher generation, whole.
     let chosen = dt.find("chosen").expect("the tree has a chosen node");
     assert_eq!(chosen.get_u32("nvram-bank-count"), Some(2));
     assert_eq!(chosen.get_u32("nvram-bank-size"), Some(0x8000));
+    assert_eq!(chosen.get_u32("nvram-current-bank"), Some(1));
     assert_eq!(
         chosen.get("nvram-proxy-data").map(|d| d.len()),
         Some(0x8000)
