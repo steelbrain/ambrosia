@@ -129,18 +129,29 @@ fn prepares_a_real_restore_boot() {
         high: vec![0u8; 8 << 20],
     };
     let seed = boot::seed(m.rnd, 1);
+    // A blank NVRAM region, as a never-booted guest's aux is: 64 KiB of two
+    // 32 KiB banks, neither valid, so the restore boot gives an empty bank.
+    let nvram_region = vec![0u8; 0x10000];
     let mut log: Vec<String> = Vec::new();
-    let handoff = boot::prepare_restore(&m, &input, &mut ram, limit, &seed, &mut |a| {
-        log.push(format!("{a}"));
-    })
+    let handoff = boot::prepare_restore(
+        &m,
+        &input,
+        &nvram_region,
+        &mut ram,
+        limit,
+        &seed,
+        &mut |a| {
+            log.push(format!("{a}"));
+        },
+    )
     .unwrap();
     for line in &log {
         eprintln!("{line}");
     }
 
-    // The entry is inside the placed kernel collection.
+    // The entry is in the kernel's static memory, below the carveouts.
     let kc_size = input.kernelcache.size.unwrap() as u64;
-    assert!(handoff.entry >= m.ram_base && handoff.entry < m.ram_base + kc_size);
+    assert!(handoff.entry >= m.ram_base);
 
     // Read the boot arguments back from where they were placed.
     let ba = handoff.boot_args;
@@ -202,5 +213,18 @@ fn prepares_a_real_restore_boot() {
     assert!(
         dt.find("arm-io/avp-ctrr").is_some(),
         "restore keeps avp-ctrr"
+    );
+
+    // The entry is inside the placed collection.
+    assert!(handoff.entry >= kc_at && handoff.entry < kc_at + kc_size);
+
+    // A blank aux gives an empty bank of the region's bank size, so the
+    // kernel's NVRAM is never zero bytes.
+    let chosen = dt.find("chosen").expect("the tree has a chosen node");
+    assert_eq!(chosen.get_u32("nvram-bank-count"), Some(2));
+    assert_eq!(chosen.get_u32("nvram-bank-size"), Some(0x8000));
+    assert_eq!(
+        chosen.get("nvram-proxy-data").map(|d| d.len()),
+        Some(0x8000)
     );
 }

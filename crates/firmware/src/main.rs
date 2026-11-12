@@ -352,6 +352,20 @@ fn restore_boot(
         display_node: None,
         avp_rtc: avp_rtc(),
     };
+    // The guest's NVRAM, from the aux disk, which the restore device tree
+    // locates. The restore kernel needs it, and it is the one disk a restore
+    // boot reads.
+    let nvram = match files::read_nvram_region(
+        &mut bdif::Disk(bdif::Drive::Aux),
+        bundle.file(restore::DEVICE_TREE).unwrap_or_default(),
+    ) {
+        Ok(n) => n,
+        Err(e) => {
+            log!("can't read NVRAM: {e}");
+            halt()
+        }
+    };
+
     let seed = boot::seed(m.rnd, timer());
     let mut ram = Ram {
         start: ram_base,
@@ -362,8 +376,9 @@ fn restore_boot(
     // The kernel and every process run on these keys. The firmware uses no
     // pointer authentication itself, so changing the keys under it is harmless.
     keys::set(&boot::pac_keys(&seed));
+    let mut logger = |a: core::fmt::Arguments<'_>| log!("{a}");
     let handoff =
-        match boot::prepare_restore(&m, &input, &mut ram, BUNDLE_AT, &seed, &mut |a| log!("{a}")) {
+        match boot::prepare_restore(&m, &input, &nvram, &mut ram, BUNDLE_AT, &seed, &mut logger) {
             Ok(h) => h,
             Err(e) => {
                 log!("restore boot failed: {e}");

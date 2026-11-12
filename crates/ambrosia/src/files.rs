@@ -344,6 +344,17 @@ fn read_nvram<D: BlockDevice>(aux: &mut D, at: u64, len: u64) -> Result<Vec<u8>,
     Ok(region)
 }
 
+/// Reads the aux disk's NVRAM region alone, which the device tree template in
+/// `device_tree` (an IMG4 or IM4P) locates. A restore boot reads nothing else
+/// from the disks, but its kernel still needs the guest's NVRAM.
+pub fn read_nvram_region<D: BlockDevice>(
+    aux: &mut D,
+    device_tree: &[u8],
+) -> Result<Vec<u8>, Error<D::Error>> {
+    let (at, len) = boot::nvram_location(device_tree).map_err(Error::Nvram)?;
+    read_nvram(aux, at, len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

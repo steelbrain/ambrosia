@@ -815,10 +815,12 @@ pub fn prepare(
 }
 
 /// Places everything for the restore kernel, below `limit`, and gives the
-/// handoff. A restore boot has no configuration: no patches, no kexts, no
-/// NVRAM from a disk. It lays the restore objects out as iBEC would and enters
-/// the installer's restore kernel, which mounts the ramdisk as `md0` and runs
-/// the restore OS, so Apple's `restored` writes the guest's LocalPolicies.
+/// handoff. A restore boot has no configuration: no patches and no kexts. It
+/// lays the restore objects out as iBEC would and enters the installer's
+/// restore kernel, which mounts the ramdisk as `md0` and runs the restore OS,
+/// so Apple's `restored` writes the guest's LocalPolicies. `nvram_region` is
+/// the guest's NVRAM, read from the aux disk as the installed boot reads it;
+/// the restore OS needs it, and clears and rewrites it.
 ///
 /// The layout follows the installed system's, which the restore kernel checks
 /// the same way: the trust cache sits right below the collection (the kernel
@@ -840,6 +842,7 @@ pub fn prepare(
 pub fn prepare_restore(
     m: &Machine,
     input: &crate::restore::Input<'_>,
+    nvram_region: &[u8],
     mem: &mut impl Memory,
     limit: u64,
     seed: &[u8; 48],
@@ -872,6 +875,28 @@ pub fn prepare_restore(
         .size
         .ok_or(Error::Image("restore ramdisk", img4::Error::BadSize))? as u64;
 
+    // The guest's NVRAM: the current bank from the aux disk, or an empty bank
+    // of the region's bank size when the aux has no valid bank yet, as a
+    // never-booted guest's is. The restore kernel panics if its NVRAM is zero
+    // bytes, and the restore OS clears and rewrites NVRAM from here.
+    let banks = NVRAM_BANKS;
+    let (nvram_data, nvram_bank) = match crate::nvram::current(nvram_region, banks) {
+        Some(bank) => {
+            log(format_args!(
+                "restore NVRAM: bank {} of {banks}, generation {}",
+                bank.index, bank.generation
+            ));
+            (bank.data.to_vec(), bank.index)
+        }
+        None => {
+            let size = nvram_region.len() / banks.max(1);
+            log(format_args!(
+                "restore NVRAM: no valid bank, an empty bank of {size:#x} bytes"
+            ));
+            (alloc::vec![0u8; size], 0)
+        }
+    };
+
     // The restore manifest is the AP ticket; it is also the SFR manifest in a
     // restore boot. The restore boot has no sealed system volume, so its root
     // hashes are empty.
@@ -883,10 +908,10 @@ pub fn prepare_restore(
         sfr_manifest: input.apticket,
         root_hash: &[],
         base_root_hash: &[],
-        nvram: &[],
-        nvram_bank: 0,
-        nvram_banks: NVRAM_BANKS as u32,
-        nvram_bank_size: 0,
+        nvram: &nvram_data,
+        nvram_bank,
+        nvram_banks: banks as u32,
+        nvram_bank_size: nvram_data.len() as u32,
     };
 
     // The carveouts at the top of RAM: the manifests, the panic log, then the
