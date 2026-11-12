@@ -625,6 +625,23 @@ fn chosen(
         );
         c.set("system-volume-auth-blob", o.root_hash);
         c.set_str("root-snapshot-name", &root_snapshot(o.root_hash)?);
+    } else {
+        // A restore boot is a remote boot of the installer's OS. These mark it
+        // as iBEC's restore would, so the kernel's boot policy takes its restore
+        // path — booting the ramdisk and skipping the installed OS's
+        // local-policy evaluation — rather than a normal OS boot. `boot-command`
+        // drives the boot mode the policy reads, `boot-type` and the handoff's
+        // `boot_type` name the remote boot, and `osenvironment` is the upgrade
+        // environment a restore runs in. The snapshot name is the boot
+        // manifest's, since a restore has no sealed system volume.
+        c.set_u32("boot-command", 7);
+        c.set_str("boot-type", "remote");
+        c.set_str("osenvironment", "upgrade");
+        c.set_u32("security-downgradable", 1);
+        c.set_str(
+            "root-snapshot-name",
+            &format!("com.apple.os.update-{}", hex_upper(boot_hash)),
+        );
     }
 
     c.set_u32("nvram-bank-size", o.nvram_bank_size);
@@ -644,6 +661,10 @@ fn chosen(
         h.set_str("name", "handoff");
         h.set_u32("boot_type", 1);
         c.children.push(h);
+    }
+    // A restore boot hands off as a remote boot.
+    if restore && let Some(h) = c.child_mut("handoff") {
+        h.set_u32("boot_type", 7);
     }
     Ok(())
 }

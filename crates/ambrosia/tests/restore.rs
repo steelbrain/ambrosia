@@ -255,4 +255,14 @@ fn prepares_a_real_restore_boot() {
         chosen.get("nvram-proxy-data").map(|d| d.len()),
         Some(0x8000)
     );
+
+    // The restore boot marks itself a remote boot, so the kernel's boot policy
+    // takes its restore path rather than a normal OS boot.
+    assert_eq!(chosen.get_u32("boot-command"), Some(7));
+    assert_eq!(chosen.get("boot-type"), Some(&b"remote\0"[..]));
+    assert_eq!(
+        dt.find("chosen/handoff")
+            .and_then(|h| h.get_u32("boot_type")),
+        Some(7)
+    );
 }
