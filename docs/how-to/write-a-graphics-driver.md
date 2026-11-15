@@ -44,7 +44,9 @@ fill. In order, it:
    them addresses inside the window, each aligned to its size, and turns
    decoding back on;
 4. sets a mode of 32 bits a pixel, `0x00RRGGBB` little-endian;
-5. fills the framebuffer's base, width, height and stride, and returns 0.
+5. fills the framebuffer's base, width, height and stride, and, when the
+   device drives more than one display and `services.revision` is 2 or
+   later, `displays`, its number of displays; then returns 0.
 
 It returns any other value when it finds no device or can't drive the one
 it found, and Ambrosia boots on without a console. Through

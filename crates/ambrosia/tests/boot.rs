@@ -56,7 +56,7 @@ fn prepares_a_guest() {
         region: "D/A".into(),
         soc_name: "Apple M1 (Virtual)".into(),
         display: None,
-        display_node: None,
+        display_nodes: Vec::new(),
         avp_rtc: true,
     };
     let files = Files {

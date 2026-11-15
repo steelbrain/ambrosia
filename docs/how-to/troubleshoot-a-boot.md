@@ -55,7 +55,9 @@ A configuration bundle adds lines of its own:
 - `AuxKC: ...` lines for the kexts it placed
   ([placing the kexts](../boot-process.md#placing-the-kexts));
 - `vtable-disc: ...` and `display node ...`, when the configuration asks
-  for them.
+  for them, and `graphics driver: <n> displays, but Graphics.DisplayNode
+  names nodes for only <m>` when the device drives more displays than the
+  configuration names nodes for.
 
 ## After the log ends
 
@@ -141,8 +143,9 @@ read but couldn't be laid out:
   such as when their chained fixups don't fit.
 - `Kernel.ExportVtableDiscriminators names <symbol>, which the kernel collection doesn't define`:
   an exported vtable symbol isn't in the kernel collection.
-- `/arm-io already has a node named as Graphics.DisplayNode`: `/arm-io`
-  already has a node by the `DisplayNode` name.
+- `/arm-io already has a node with display <i>'s name in Graphics.DisplayNode`:
+  `/arm-io` already has a node by the name `DisplayNode` gives display
+  `<i>`, counting from 0.
 - `the layout doesn't fit in RAM, or the kexts and trust caches don't fit below the kernel collection`:
   give the guest more memory, or place fewer kexts.
 - `the device tree template names no NVRAM region, or the aux disk's NVRAM region holds no valid bank`:

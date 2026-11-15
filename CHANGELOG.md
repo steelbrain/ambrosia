@@ -7,6 +7,19 @@ release's image is published with the release.
 
 ## Unreleased
 
+- A graphics device can drive more than one display. Revision 2 of the
+  graphics driver interface lets a module say how many displays its device
+  drives, in the framebuffer's `displays`, the word that was `reserved` in
+  revision 1; a revision 1 module, which leaves it zero, drives one.
+  `Graphics` > `DisplayNode` takes an array of node names as well as one
+  name, display 0's first, and Ambrosia adds a `/arm-io` node for each
+  display the device drives, as far as the names go. Names past the
+  device's number of displays get no node, so one configuration serves a
+  device with any number of displays up to the names it gives. A
+  `/arm-io` node already named as a display's now stops the boot with
+  `/arm-io already has a node with display <i>'s name in Graphics.DisplayNode`
+  ([docs/graphics-drivers.md](docs/graphics-drivers.md#the-framebuffer),
+  [docs/configuration.md](docs/configuration.md#graphics--displaynode)).
 - A restore bundle boots the installer's restore OS instead of the installed
   system. When the bundle in RAM holds the restore objects — a restore
   kernelcache, device tree and trust cache, the AP ticket, the LocalPolicy,

@@ -16,6 +16,9 @@
 #![no_std]
 #![no_main]
 
+// The interface's file, as Ambrosia has it. The module needs only revision 1's
+// part of it (`NEEDS_REVISION`), so some of it goes unused here.
+#[allow(dead_code)]
 #[path = "../../../crates/ambrosia/src/graphics.rs"]
 mod graphics;
 mod mmio;
@@ -35,6 +38,11 @@ const DRIVES_A_DISPLAY: i32 = 0;
 const NO_DEVICE: i32 = 1;
 /// Its result when it found the device but could not set it up.
 const FAILED: i32 = 2;
+
+/// The interface revision whose fields the module uses: revision 1's are all
+/// it needs, since the device has one display, which a framebuffer whose
+/// `displays` is zero says.
+const NEEDS_REVISION: u32 = 1;
 
 /// The configuration space's command register, and its memory decoding bit.
 const COMMAND: u64 = 0x04;
@@ -180,7 +188,7 @@ const _: graphics::Entry = driver_entry;
 #[unsafe(no_mangle)]
 pub extern "C" fn driver_entry(s: &Services, out: &mut Framebuffer) -> i32 {
     SERVICES.store(s as *const Services as *mut Services, Ordering::Relaxed);
-    if s.revision < graphics::REVISION {
+    if s.revision < NEEDS_REVISION {
         return FAILED;
     }
     let Some((c, dev, func)) = find(s) else {
@@ -249,7 +257,7 @@ pub extern "C" fn driver_entry(s: &Services, out: &mut Framebuffer) -> i32 {
         width: u32::from(WIDTH),
         height: u32::from(HEIGHT),
         stride,
-        reserved: 0,
+        displays: 0,
     };
     DRIVES_A_DISPLAY
 }

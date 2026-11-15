@@ -193,7 +193,10 @@ IOMobileFramebuffer framework counts the `display-subsystem` nodes under
 and a process that counts none never looks for a framebuffer driver.
 WindowServer asks before any Auxiliary-KC kext has loaded, so a node a kext
 adds comes too late. That is what `Graphics` > `DisplayNode` is for
-(`display_node` in `tree.rs`).
+(`display_node` in `tree.rs`). A process that counts nodes waits up to 30
+seconds for a framebuffer service for each, so the tree gets a node only for
+a display the graphics device drives, which the driver module reports
+(`display_nodes` in `tree.rs`).
 
 **The kernel's console stays where the boot arguments put it.** It draws
 at the framebuffer address it was given, even if the kernel later moves

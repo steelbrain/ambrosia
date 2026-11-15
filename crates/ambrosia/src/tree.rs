@@ -41,12 +41,14 @@ pub struct Machine {
     /// The SoC's name, for `/product/product-soc-name`.
     pub soc_name: String,
     /// The display a graphics driver module set up, if any (`graphics.rs`),
-    /// which the kernel's console takes over.
+    /// which the kernel's console takes over. It says how many displays the
+    /// module's device drives.
     pub display: Option<Framebuffer>,
-    /// The name of the display's node under `/arm-io`, from the
-    /// configuration (`Graphics` > `DisplayNode`), written only with a
-    /// display.
-    pub display_node: Option<String>,
+    /// The names of the displays' nodes under `/arm-io`, display 0's first,
+    /// from the configuration (`Graphics` > `DisplayNode`). Only those for
+    /// the displays the device drives are written, and only with a display
+    /// ([`display_nodes`]).
+    pub display_nodes: Vec<String>,
     /// Whether the machine has avp-rtc, the clock macOS keeps its offset to
     /// calendar time with: its ID register reads 0xf001, which is how iBoot
     /// tells.
@@ -139,8 +141,9 @@ pub enum Error {
     /// A template directive asks for a value longer than 4 KiB, which no
     /// template's directives do.
     BadDirective,
-    /// `/arm-io` already has a child named as the display's node.
-    DisplayNodeTaken,
+    /// `/arm-io` already has a child named as a display's node: the
+    /// display's index.
+    DisplayNodeTaken(usize),
 }
 
 impl fmt::Display for Error {
@@ -161,9 +164,10 @@ impl fmt::Display for Error {
             Error::BadDirective => {
                 f.write_str("a directive in the device tree template asks for more than 4 KiB")
             }
-            Error::DisplayNodeTaken => {
-                f.write_str("/arm-io already has a node named as Graphics.DisplayNode")
-            }
+            Error::DisplayNodeTaken(i) => write!(
+                f,
+                "/arm-io already has a node with display {i}'s name in Graphics.DisplayNode"
+            ),
         }
     }
 }
@@ -854,22 +858,50 @@ fn arm_io(io: &mut Node, m: &Machine, keep_ctrr: bool) -> Result<(), Error> {
     for name in ["fuse-revision", "tunable-revision", "chip-config-rack"] {
         io.set_u32(name, 0);
     }
-    if let (Some(_), Some(name)) = (&m.display, &m.display_node) {
-        display_node(io, name)?;
+    for (i, name) in display_nodes(m).iter().enumerate() {
+        display_node(io, i, name)?;
     }
     pcie_window(io, m.pcie_window)
 }
 
-/// Adds the node a kernel display driver attaches to, for the display a
-/// graphics driver module set up, named `name`. Its `device_type`,
+/// The names of the display nodes the tree gets, display 0's first: one for
+/// each display the graphics driver module's device drives, as far as the
+/// configuration names them, and none without a display. A process waits for
+/// a framebuffer service for each node it counts, so there is never a node for
+/// a display the device doesn't have.
+pub fn display_nodes(m: &Machine) -> &[String] {
+    match &m.display {
+        None => &[],
+        Some(fb) => {
+            let n = usize::try_from(fb.display_count()).unwrap_or(usize::MAX);
+            &m.display_nodes[..m.display_nodes.len().min(n)]
+        }
+    }
+}
+
+/// When the configuration names nodes for some of the displays the graphics
+/// driver module's device drives, but not all: how many displays the device
+/// drives, and how many the configuration names. The named ones get nodes and
+/// the rest none, which the boot's log says. `None` when every display has a
+/// name, or none does, which means the configuration wants no nodes.
+pub fn display_shortfall(m: &Machine) -> Option<(u32, usize)> {
+    let displays = m.display.as_ref()?.display_count();
+    let named = m.display_nodes.len();
+    let short = named != 0 && usize::try_from(displays).is_ok_and(|d| named < d);
+    short.then_some((displays, named))
+}
+
+/// Adds the node a kernel display driver attaches to, for display `i` of the
+/// device a graphics driver module set up, named `name`. Its `device_type`,
 /// `display-subsystem`, is what macOS's IOMobileFramebuffer framework counts
-/// among arm-io's children when a process first asks for a display. A process
-/// that counts none never matches a framebuffer service, so the node must be
-/// in the tree before WindowServer starts, which is before any placed kext
-/// could add one (docs/configuration.md, "Graphics > DisplayNode").
-fn display_node(io: &mut Node, name: &str) -> Result<(), Error> {
+/// among arm-io's children when a process first asks for a display; the
+/// process then waits for as many framebuffer services as it counted. A
+/// process that counts none never matches a framebuffer service, so the nodes
+/// must be in the tree before WindowServer starts, which is before any placed
+/// kext could add one (docs/configuration.md, "Graphics > DisplayNode").
+fn display_node(io: &mut Node, i: usize, name: &str) -> Result<(), Error> {
     if io.child(name).is_some() {
-        return Err(Error::DisplayNodeTaken);
+        return Err(Error::DisplayNodeTaken(i));
     }
     let mut node = Node::default();
     node.set_str("name", name);
@@ -941,7 +973,7 @@ mod tests {
             region: "D/A".into(),
             soc_name: "Apple M1 (Virtual)".into(),
             display: None,
-            display_node: None,
+            display_nodes: Vec::new(),
             avp_rtc: true,
         }
     }
@@ -1160,10 +1192,10 @@ mod tests {
             width: 1920,
             height: 1080,
             stride: 7680,
-            reserved: 0,
+            displays: 0,
         };
         let named = Machine {
-            display_node: Some("display0".into()),
+            display_nodes: vec!["display0".into()],
             ..machine()
         };
         let mut io = arm_io();
@@ -1183,7 +1215,7 @@ mod tests {
 
         let mut io = arm_io();
         let unnamed = Machine {
-            display_node: None,
+            display_nodes: Vec::new(),
             ..m.clone()
         };
         super::arm_io(&mut io, &unnamed, false).unwrap();
@@ -1191,12 +1223,76 @@ mod tests {
 
         let mut io = arm_io();
         let pcie = Machine {
-            display_node: Some("pcie".into()),
+            display_nodes: vec!["pcie".into()],
             ..m
         };
         assert_eq!(
             super::arm_io(&mut io, &pcie, false),
-            Err(Error::DisplayNodeTaken)
+            Err(Error::DisplayNodeTaken(0))
+        );
+    }
+
+    /// A device with several displays gets a node for each, in the order the
+    /// configuration names them, as far as the names go. Names past the
+    /// device's count get no node, and a module that left `displays` zero, as
+    /// one written for revision 1 does, drives one.
+    #[test]
+    fn display_nodes_for_each_display() {
+        let names: Vec<String> = ["d0", "d1", "d2", "d3"].map(String::from).into();
+        let with = |displays: u32, n: usize| Machine {
+            display: Some(Framebuffer {
+                base: 0x8040_0000,
+                width: 1920,
+                height: 1080,
+                stride: 7680,
+                displays,
+            }),
+            display_nodes: names[..n].to_vec(),
+            ..machine()
+        };
+        let added = |m: &Machine| {
+            let mut io = arm_io();
+            super::arm_io(&mut io, m, false).unwrap();
+            io.children
+                .iter()
+                .filter(|c| c.get("device_type") == Some(&b"display-subsystem\0"[..]))
+                .map(|c| String::from_utf8(c.get("name").unwrap().to_vec()).unwrap())
+                .collect::<Vec<_>>()
+        };
+        for (displays, n, want) in [
+            (0, 4, &["d0\0"][..]),
+            (1, 4, &["d0\0"]),
+            (2, 4, &["d0\0", "d1\0"]),
+            (4, 4, &["d0\0", "d1\0", "d2\0", "d3\0"]),
+            (4, 2, &["d0\0", "d1\0"]),
+            (u32::MAX, 3, &["d0\0", "d1\0", "d2\0"]),
+            (4, 0, &[]),
+        ] {
+            let m = with(displays, n);
+            assert_eq!(added(&m), want, "{displays} displays, {n} names");
+            assert_eq!(display_nodes(&m).len(), want.len());
+            let short = (n != 0 && n < displays.max(1) as usize).then_some((displays.max(1), n));
+            assert_eq!(
+                display_shortfall(&m),
+                short,
+                "{displays} displays, {n} names"
+            );
+        }
+        let none = Machine {
+            display: None,
+            ..with(4, 2)
+        };
+        assert!(display_nodes(&none).is_empty());
+        assert_eq!(display_shortfall(&none), None);
+
+        // The second display's name is taken.
+        let m = Machine {
+            display_nodes: vec!["d0".into(), "pcie".into()],
+            ..with(2, 0)
+        };
+        assert_eq!(
+            super::arm_io(&mut arm_io(), &m, false),
+            Err(Error::DisplayNodeTaken(1))
         );
     }
 

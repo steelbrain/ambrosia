@@ -530,9 +530,14 @@ pub fn prepare(
             vtables.len()
         ));
     }
-    if let (Some(_), Some(name)) = (&m.display, &m.display_node) {
+    for name in tree::display_nodes(m) {
         log(format_args!(
             "display node /arm-io/{name}, a display-subsystem"
+        ));
+    }
+    if let Some((displays, named)) = tree::display_shortfall(m) {
+        log(format_args!(
+            "graphics driver: {displays} displays, but Graphics.DisplayNode names nodes for only {named}"
         ));
     }
 
@@ -1212,7 +1217,7 @@ mod tests {
             width: 1024,
             height: 768,
             stride: 4096,
-            reserved: 0,
+            displays: 0,
         };
         assert_eq!(
             video(Some(&fb), 0x2_fdc0_0000),
@@ -1330,8 +1335,8 @@ mod tests {
             "kernelcache: its payload is encrypted"
         );
         assert_eq!(
-            Error::Populate(tree::Error::DisplayNodeTaken).to_string(),
-            "/arm-io already has a node named as Graphics.DisplayNode"
+            Error::Populate(tree::Error::DisplayNodeTaken(1)).to_string(),
+            "/arm-io already has a node with display 1's name in Graphics.DisplayNode"
         );
     }
 

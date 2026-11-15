@@ -38,7 +38,8 @@
 //!     <key>Driver</key>  <string>Drivers/display.elf</string> (optional,
 //!                                                     default none)
 //!     <key>DisplayNode</key> <string>display0</string> (optional,
-//!                                                     default none)
+//!                                                     default none;
+//!                                                     or an array of them)
 //!   </dict>
 //! </dict>
 //! ```
@@ -65,10 +66,12 @@
 //! and which the kernel is handed. With no driver, the log goes only to the
 //! UART.
 //!
-//! `Graphics` > `DisplayNode` names a device tree node that Ambrosia adds
-//! under `/arm-io` for the display the driver sets up, with `device_type`
-//! `display-subsystem`, for a kernel display driver that attaches to it
-//! (`tree.rs`). It is written only when the driver drives a display.
+//! `Graphics` > `DisplayNode` names the device tree nodes that Ambrosia adds
+//! under `/arm-io` for the displays the driver's device drives, with
+//! `device_type` `display-subsystem`, for a kernel display driver that
+//! attaches to them (`tree.rs`). It is one name, display 0's, or an array of
+//! names, display 0's first. Ambrosia adds a node for each display the device
+//! drives, as far as the names go, and only when the driver drives a display.
 
 use crate::bundle::{self, Bundle};
 use crate::plist::{self, Value};
@@ -127,9 +130,10 @@ pub struct Config<'a> {
     pub patches: Vec<Patch>,
     /// The graphics driver module `Graphics` > `Driver` names, if any.
     pub driver: Option<Driver<'a>>,
-    /// The display's device tree node, from `Graphics` > `DisplayNode`: a
-    /// name, not empty and without a `/`.
-    pub display_node: Option<String>,
+    /// The names of the displays' device tree nodes, from `Graphics` >
+    /// `DisplayNode`, display 0's first: each not empty, without a `/`, and
+    /// different from the others. Empty when the key is absent.
+    pub display_nodes: Vec<String>,
     /// The donor vtable symbols of `Kernel` > `ExportVtableDiscriminators`,
     /// whose per-slot PAC discriminators Ambrosia hands over for injected code.
     pub export_vtable_disc: Vec<String>,
@@ -155,8 +159,11 @@ pub enum Error {
     /// A patch whose `Find` is empty, or not as long as its `Replace`: its
     /// index in `Kernel` > `Patch`.
     PatchLength(usize),
-    /// `Graphics` > `DisplayNode` is empty or holds a `/`.
-    DisplayNode,
+    /// A name in `Graphics` > `DisplayNode` is empty or holds a `/`, or the
+    /// array is empty: the key's path, such as `Graphics.DisplayNode[1]`.
+    DisplayNode(String),
+    /// `Graphics` > `DisplayNode` gives two displays this name.
+    DisplayNodeTwice(String),
     /// A kext whose Info.plist is not in the bundle: its `BundlePath`.
     NoKext(String),
     /// A kext's executable, which its Info.plist names, is not in the bundle:
@@ -180,8 +187,9 @@ impl fmt::Display for Error {
                 f,
                 "{config}: Kernel.Patch[{i}]: Find is empty or not as long as Replace"
             ),
-            Error::DisplayNode => {
-                write!(f, "{config}: Graphics.DisplayNode is empty or holds a /")
+            Error::DisplayNode(key) => write!(f, "{config}: {key} is empty or holds a /"),
+            Error::DisplayNodeTwice(name) => {
+                write!(f, "{config}: Graphics.DisplayNode names {name} twice")
             }
             Error::NoKext(path) => write!(
                 f,
@@ -256,6 +264,41 @@ fn dict(v: &Value) -> Option<&Value> {
     matches!(v, Value::Dict(_)).then_some(v)
 }
 
+/// The names `Graphics` > `DisplayNode`, `v`, gives the displays' device tree
+/// nodes, display 0's first: one string, or an array of them. Each must be a
+/// node's name, not empty and without a `/`, which would make it a path, and
+/// no name may come twice, since each display has a node of its own.
+fn display_nodes(v: &Value) -> Result<Vec<String>, Error> {
+    const KEY: &str = "Graphics.DisplayNode";
+    let names = match v {
+        Value::String(s) => alloc::vec![(String::from(KEY), s.as_str())],
+        Value::Array(a) if a.is_empty() => return Err(Error::DisplayNode(KEY.into())),
+        Value::Array(a) => a
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let key = format!("{KEY}[{i}]");
+                match e.as_str() {
+                    Some(s) => Ok((key, s)),
+                    None => Err(config_key(key)),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(config_key(KEY.into())),
+    };
+    let mut out: Vec<String> = Vec::with_capacity(names.len());
+    for (key, name) in names {
+        if name.is_empty() || name.contains('/') {
+            return Err(Error::DisplayNode(key));
+        }
+        if out.iter().any(|n| n == name) {
+            return Err(Error::DisplayNodeTwice(name.into()));
+        }
+        out.push(name.into());
+    }
+    Ok(out)
+}
+
 impl<'a> Config<'a> {
     /// Reads the configuration in `bundle`, and each kext it names.
     pub fn read(bundle: &Bundle<'a>) -> Result<Config<'a>, Error> {
@@ -323,11 +366,8 @@ impl<'a> Config<'a> {
                 elf,
             });
         }
-        if let Some(name) = optional(graphics, &graphics_at, "DisplayNode", Value::as_str)? {
-            if name.is_empty() || name.contains('/') {
-                return Err(Error::DisplayNode);
-            }
-            config.display_node = Some(name.to_string());
+        if let Some(v) = graphics.get("DisplayNode") {
+            config.display_nodes = display_nodes(v)?;
         }
 
         let exports = optional(
@@ -563,28 +603,66 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_display_node() {
-        let read = |text: &str| {
-            Config::read(&Bundle::parse(&config(text, &[])).unwrap()).map(|c| c.display_node)
-        };
-        assert_eq!(
-            read(
-                "<dict><key>Graphics</key><dict><key>DisplayNode</key><string>display0</string></dict></dict>"
-            ),
-            Ok(Some("display0".into()))
-        );
-        assert_eq!(read("<dict/>"), Ok(None));
-        // Not a string, empty, or with a `/`, which would make it a path.
-        for (value, want) in [
-            ("<true/>", config_key("Graphics.DisplayNode".into())),
-            ("<string></string>", Error::DisplayNode),
-            ("<string>a/b</string>", Error::DisplayNode),
-        ] {
+    fn reads_the_display_nodes() {
+        let read = |value: &str| {
             let text = format!(
                 "<dict><key>Graphics</key><dict><key>DisplayNode</key>{value}</dict></dict>"
             );
-            assert_eq!(read(&text).unwrap_err(), want, "{value}");
+            Config::read(&Bundle::parse(&config(&text, &[])).unwrap()).map(|c| c.display_nodes)
+        };
+        let names = |n: &[&str]| Ok(n.iter().map(|s| String::from(*s)).collect::<Vec<_>>());
+        // One name, or an array of them, display 0's first.
+        assert_eq!(read("<string>display0</string>"), names(&["display0"]));
+        assert_eq!(
+            read("<array><string>d0</string><string>d1</string><string>d2</string></array>"),
+            names(&["d0", "d1", "d2"])
+        );
+        assert_eq!(
+            Config::read(&Bundle::parse(&config("<dict/>", &[])).unwrap()).map(|c| c.display_nodes),
+            names(&[])
+        );
+        let key = |k: &str| String::from(k);
+        for (value, want) in [
+            // Neither a string nor an array of strings.
+            ("<true/>", config_key(key("Graphics.DisplayNode"))),
+            (
+                "<array><string>d0</string><integer>1</integer></array>",
+                config_key(key("Graphics.DisplayNode[1]")),
+            ),
+            // Empty, or with a `/`, which would make it a path.
+            (
+                "<string></string>",
+                Error::DisplayNode(key("Graphics.DisplayNode")),
+            ),
+            (
+                "<string>a/b</string>",
+                Error::DisplayNode(key("Graphics.DisplayNode")),
+            ),
+            ("<array/>", Error::DisplayNode(key("Graphics.DisplayNode"))),
+            (
+                "<array><string>d0</string><string></string></array>",
+                Error::DisplayNode(key("Graphics.DisplayNode[1]")),
+            ),
+            (
+                "<array><string>a/b</string></array>",
+                Error::DisplayNode(key("Graphics.DisplayNode[0]")),
+            ),
+            // One node for two displays.
+            (
+                "<array><string>d0</string><string>d1</string><string>d0</string></array>",
+                Error::DisplayNodeTwice(key("d0")),
+            ),
+        ] {
+            assert_eq!(read(value).unwrap_err(), want, "{value}");
         }
+        assert_eq!(
+            Error::DisplayNode(key("Graphics.DisplayNode[1]")).to_string(),
+            "config.plist: Graphics.DisplayNode[1] is empty or holds a /"
+        );
+        assert_eq!(
+            Error::DisplayNodeTwice(key("d0")).to_string(),
+            "config.plist: Graphics.DisplayNode names d0 twice"
+        );
     }
 
     #[test]

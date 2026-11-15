@@ -252,10 +252,11 @@ console. If the loader refuses the file, the boot stops with
 
 ### Graphics > DisplayNode
 
-A string: the name of a device tree node that Ambrosia adds under
-`/arm-io` for the display the driver module sets up, for a kernel display
-driver to attach to. Set it only when the configuration also adds that
-driver, as a kext under `Kernel` > `Add`.
+The names of the device tree nodes that Ambrosia adds under `/arm-io` for
+the displays the driver module's device drives, for a kernel display
+driver to attach to: a string, display 0's node, or an array of strings,
+one for each display, display 0's first. Set it only when the
+configuration also adds that driver, as a kext under `Kernel` > `Add`.
 
 ```xml
 <key>Graphics</key>
@@ -267,25 +268,59 @@ driver, as a kext under `Kernel` > `Add`.
 </dict>
 ```
 
-The node has two properties: `name`, the string, and `device_type`,
+Each node has two properties: `name`, its name, and `device_type`,
 `display-subsystem`. macOS's IOMobileFramebuffer framework counts the
 `display-subsystem` nodes under `/arm-io` the first time a process asks
 for a display. A process that counts none never looks for a framebuffer
-driver, and one that counts some waits up to 30 seconds for a driver to
-appear. WindowServer asks before any added kext starts, so a kext's own
-node comes too late for it. With the node in the tree from the start,
-WindowServer finds the display once the kext attaches to the node.
+driver, and one that counts some waits up to 30 seconds for as many
+framebuffer services as it counted. WindowServer asks before any added
+kext starts, so a kext's own node comes too late for it. With the nodes in
+the tree from the start, WindowServer finds the displays once the kext
+publishes a framebuffer for each.
 
-Ambrosia adds the node only when the module drives a display, and logs it:
+Ambrosia adds the nodes only when the module drives a display. The module
+says how many displays its device drives
+([graphics drivers](graphics-drivers.md#the-framebuffer)), and Ambrosia
+adds a node for each of them, in order, as far as the names go. Names past
+the device's number of displays get no node, so no process waits for a
+display the device doesn't have, and one configuration can name nodes for
+as many displays as the device can have:
+
+```xml
+<key>DisplayNode</key>
+<array>
+  <string>example-display0</string>
+  <string>example-display1</string>
+  <string>example-display2</string>
+  <string>example-display3</string>
+</array>
+```
+
+Ambrosia logs each node it adds. With that array and a device that drives
+two displays:
 
 ```text
 ambrosia: display node /arm-io/example-display0, a display-subsystem
+ambrosia: display node /arm-io/example-display1, a display-subsystem
 ```
 
-The name must not be empty or hold a `/`, or the boot stops with
-`bad configuration: config.plist: Graphics.DisplayNode is empty or holds a /`.
+When the device drives more displays than the configuration names, the
+named ones get nodes, the rest none, and Ambrosia logs it:
+
+```text
+ambrosia: graphics driver: 4 displays, but Graphics.DisplayNode names nodes for only 2
+```
+
+Each name must not be empty or hold a `/`, and an array must not be
+empty, or the boot stops with
+`bad configuration: config.plist: Graphics.DisplayNode is empty or holds a /`,
+or, for the second name of an array,
+`bad configuration: config.plist: Graphics.DisplayNode[1] is empty or holds a /`.
+A name given twice stops the boot with
+`bad configuration: config.plist: Graphics.DisplayNode names <name> twice`.
 A name `/arm-io` already has stops the boot with
-`boot failed: /arm-io already has a node named as Graphics.DisplayNode`.
+`boot failed: /arm-io already has a node with display <i>'s name in Graphics.DisplayNode`,
+where `<i>` is the display's number, 0 for the first.
 
 ## Errors
 
@@ -308,7 +343,10 @@ the same problems on the host, with the firmware's own parsers.
   `config.plist` or a kext's Info.plist, such as
   `Kexts/Hello.kext/Contents/Info.plist` for its `CFBundleIdentifier`.
 - `bad configuration: config.plist: Kernel.Patch[<i>]: Find is empty or not as long as Replace`.
-- `bad configuration: config.plist: Graphics.DisplayNode is empty or holds a /`.
+- `bad configuration: config.plist: Graphics.DisplayNode is empty or holds a /`,
+  or `Graphics.DisplayNode[<i>]` for a name in an array: a node name is
+  empty or holds a `/`, or the array is empty.
+- `bad configuration: config.plist: Graphics.DisplayNode names <name> twice`.
 - `bad configuration: config.plist: Kernel.Add names <path>, but the bundle has no <path>/Contents/Info.plist`:
   the kext's `BundlePath` is not a kext in the bundle.
 - `bad configuration: the bundle has no <path>, which a kext's CFBundleExecutable names`:

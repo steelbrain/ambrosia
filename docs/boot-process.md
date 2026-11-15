@@ -443,9 +443,11 @@ the node, 27.0.1 never answers SSH. `fuse-revision`, `tunable-revision`
 and `chip-config-rack` are set to 0.
 
 When a graphics driver module drives a display and the configuration
-names a `Graphics` > `DisplayNode`, `/arm-io` gains a node by that name
-whose `device_type` is `display-subsystem`, for a kernel display driver to
-attach to ([configuration](configuration.md#graphics--displaynode)).
+names nodes in `Graphics` > `DisplayNode`, `/arm-io` gains a node for
+each display the module's device drives, as far as the names go, each
+named as the configuration names it and with `device_type`
+`display-subsystem`, for a kernel display driver to attach to
+([configuration](configuration.md#graphics--displaynode)).
 
 **The PCIe window.** The template's `/arm-io/pcie` `ranges` give
 Virtualization.framework's window. The kernel's PCIe driver reads each

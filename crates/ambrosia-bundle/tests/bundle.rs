@@ -526,8 +526,28 @@ fn configuration_errors() {
         "display-node",
         b"<dict><key>Graphics</key><dict><key>DisplayNode</key><string>a/b</string>\
               </dict></dict>",
-        |e| matches!(e, Error::DisplayNode),
+        |e| matches!(e, Error::DisplayNode(k) if k == "Graphics.DisplayNode"),
         "config.plist: Graphics.DisplayNode must be a node name",
+    );
+    refused(
+        "display-node-element",
+        b"<dict><key>Graphics</key><dict><key>DisplayNode</key><array><string>d0</string>\
+              <string></string></array></dict></dict>",
+        |e| matches!(e, Error::DisplayNode(k) if k == "Graphics.DisplayNode[1]"),
+        "config.plist: Graphics.DisplayNode[1] must be a node name: a string",
+    );
+    refused(
+        "display-node-type",
+        b"<dict><key>Graphics</key><dict><key>DisplayNode</key><true/></dict></dict>",
+        |e| matches!(e, Error::Key { key, .. } if key == "Graphics.DisplayNode"),
+        "config.plist: Graphics.DisplayNode is not a string, or an array of strings",
+    );
+    refused(
+        "display-node-twice",
+        b"<dict><key>Graphics</key><dict><key>DisplayNode</key><array><string>d0</string>\
+              <string>d0</string></array></dict></dict>",
+        |e| matches!(e, Error::DisplayNodeTwice(n) if n == "d0"),
+        "config.plist: Graphics.DisplayNode names d0 twice",
     );
     refused(
         "no-kext",

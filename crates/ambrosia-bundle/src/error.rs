@@ -54,8 +54,11 @@ pub enum Error {
     /// A patch whose `Find` is empty, or not as long as its `Replace`: its
     /// key path, such as `Kernel.Patch[0]`.
     PatchLength(String),
-    /// `Graphics.DisplayNode` is empty or holds a `/`.
-    DisplayNode,
+    /// A name in `Graphics.DisplayNode` is empty or holds a `/`, or the array
+    /// is empty: the key's path, such as `Graphics.DisplayNode[1]`.
+    DisplayNode(String),
+    /// `Graphics.DisplayNode` gives two displays this name.
+    DisplayNodeTwice(String),
     /// A kext the configuration names whose Info.plist is not in the bundle:
     /// its `BundlePath`.
     NoKext(String),
@@ -93,11 +96,12 @@ pub enum Error {
 fn expected(key: &str) -> (&'static str, bool) {
     let name = key.rsplit('.').next().unwrap_or(key);
     if name.ends_with(']') {
-        // An element of ExportVtableDiscriminators, the one array of
-        // strings.
+        // An element of ExportVtableDiscriminators or DisplayNode, the arrays
+        // of strings.
         return ("a string", false);
     }
     match name {
+        "DisplayNode" => ("a string, or an array of strings", false),
         "Kernel" | "Graphics" => ("a dictionary", false),
         "Add" | "Patch" | "ExportVtableDiscriminators" => ("an array", false),
         "Enabled" => ("a boolean, <true/> or <false/>", false),
@@ -193,9 +197,19 @@ impl fmt::Display for Error {
                 f,
                 "config.plist: {key}: Find must not be empty, and Replace must be as long as Find"
             ),
-            Error::DisplayNode => f.write_str(
-                "config.plist: Graphics.DisplayNode must be a node name: a string, not empty \
-                 and without a /",
+            Error::DisplayNode(key) if key.ends_with(']') => write!(
+                f,
+                "config.plist: {key} must be a node name: a string, not empty and without a /"
+            ),
+            Error::DisplayNode(key) => write!(
+                f,
+                "config.plist: {key} must be a node name, a string not empty and without a /, \
+                 or a non-empty array of them"
+            ),
+            Error::DisplayNodeTwice(name) => write!(
+                f,
+                "config.plist: Graphics.DisplayNode names {name} twice; each display needs a \
+                 node of its own"
             ),
             Error::NoKext(path) => write!(
                 f,

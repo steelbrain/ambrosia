@@ -1,4 +1,4 @@
-//! The graphics driver interface, revision 1: how Ambrosia starts a driver
+//! The graphics driver interface, revision 2: how Ambrosia starts a driver
 //! module, and what the module gives back. docs/graphics-drivers.md is the
 //! guide for module authors.
 //!
@@ -7,15 +7,17 @@
 //! Ambrosia loads it, calls its entry point once, before it reads the
 //! guest's disks, and never calls into it again. The module finds its device
 //! on the PCIe bus, gives it addresses from the PCIe window, sets a mode, and
-//! returns the framebuffer. Ambrosia then draws its log there, as an early
-//! console, and hands the framebuffer to the kernel.
+//! returns the framebuffer, with the number of displays the device drives.
+//! Ambrosia then draws its log there, as an early console, hands the
+//! framebuffer to the kernel, and adds a device tree node for each display the
+//! configuration names.
 //!
 //! The types are `#[repr(C)]`, and the entry point and the log callback are
 //! `extern "C"`, so a module can be written in any language. In C:
 //!
 //! ```c
 //! struct services {                  // offset
-//!     uint32_t revision;             //  0: 1
+//!     uint32_t revision;             //  0: 2
 //!     uint32_t reserved;             //  4: 0
 //!     uint64_t ecam_base;            //  8
 //!     uint64_t ecam_size;            // 16
@@ -30,7 +32,7 @@
 //!     uint32_t width;                //  8
 //!     uint32_t height;               // 12
 //!     uint32_t stride;               // 16
-//!     uint32_t reserved;             // 20
+//!     uint32_t displays;             // 20
 //! };                                 // 24 bytes
 //!
 //! int32_t entry(const struct services *services, struct framebuffer *out);
@@ -40,8 +42,10 @@
 //! it as it is (`drivers/bochs-display` does).
 
 /// The interface's revision, which [`Services::revision`] carries. A later
-/// revision only adds fields at the end of [`Services`].
-pub const REVISION: u32 = 1;
+/// revision only adds fields at the end of [`Services`], or gives a field
+/// that was zero a meaning in which zero means what it did before. Revision 2
+/// gave [`Framebuffer::displays`] its meaning.
+pub const REVISION: u32 = 2;
 
 /// What Ambrosia gives the module. All addresses are physical. The module
 /// runs with the MMU on and an identity map, so they are its pointers too.
@@ -91,8 +95,21 @@ pub struct Framebuffer {
     /// Bytes from one row to the next: at least `4 * width`, and a multiple
     /// of 4.
     pub stride: u32,
-    /// Zero.
-    pub reserved: u32,
+    /// How many displays the device drives, the framebuffer's being display
+    /// 0. Zero counts as one, so a module written for revision 1, which left
+    /// this word as Ambrosia zeroed it, drives one. Ambrosia adds a device tree
+    /// node for each display the configuration names a node for
+    /// (`Graphics` > `DisplayNode`), up to this many. A module sets it only
+    /// when [`Services::revision`] is 2 or later.
+    pub displays: u32,
+}
+
+impl Framebuffer {
+    /// How many displays the device drives: [`Framebuffer::displays`], with
+    /// zero counted as one.
+    pub fn display_count(&self) -> u32 {
+        self.displays.max(1)
+    }
 }
 
 /// The module's entry point, its ELF header's `e_entry`. It returns 0 when

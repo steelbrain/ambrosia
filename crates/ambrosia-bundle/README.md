@@ -105,7 +105,8 @@ checks these only at boot:
 - each symbol `ExportVtableDiscriminators` names, which the kernel
   collection must define;
 - `Graphics` > `DisplayNode`, which must not name a node the guest's
-  device tree already has under `/arm-io`;
+  device tree already has under `/arm-io`, and how many of its names get
+  nodes, which is how many displays the graphics device drives;
 - that the Auxiliary kernel collection and the guest's trust caches fit in
   RAM below the kernel collection;
 - that the collection's load commands, with a fileset entry for each kext,

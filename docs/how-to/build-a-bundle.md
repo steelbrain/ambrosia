@@ -114,8 +114,9 @@ it.
 
 They can't check what depends on the guest, which only the boot has: the
 symbols a kext imports, the entries a patch's `Identifier` names, the
-symbols `ExportVtableDiscriminators` names, a `DisplayNode` the guest's
-device tree already has, and whether the kexts fit in RAM beside the
+symbols `ExportVtableDiscriminators` names, a `DisplayNode` name the
+guest's device tree already has, how many displays the graphics device
+drives, and whether the kexts fit in RAM beside the
 guest's kernel collection. Nor do they build the Auxiliary kernel
 collection, so they don't find kexts whose fileset entries overflow its
 16 KiB header, or whose chained fixups overflow its 16 KiB `__LINKEDIT`. A

@@ -2,7 +2,7 @@
 
 Ambrosia has no display driver of its own. A graphics driver module, named
 by the configuration, sets up one display device and gives Ambrosia a
-framebuffer. Ambrosia draws its log there as an early console, then hands
+framebuffer, with the number of displays the device drives. Ambrosia draws its log there as an early console, then hands
 the framebuffer to the kernel, whose console goes on drawing there. On an
 x86-64 PC a device's option ROM does the same through UEFI GOP.
 
@@ -26,8 +26,9 @@ module, for QEMU's `bochs-display`, in
 3. If the module returns 0 with a framebuffer Ambrosia can draw on,
    Ambrosia clears it to black and draws every later log line there as
    well as on the UART. It gives the framebuffer to the kernel in the boot
-   arguments' video fields. If the configuration names a
-   `Graphics` > `DisplayNode`, Ambrosia also adds that device tree node,
+   arguments' video fields. If the configuration names nodes in
+   `Graphics` > `DisplayNode`, Ambrosia also adds a device tree node for
+   each display the module says its device drives, as far as the names go,
    for a kernel display driver
    ([configuration](configuration.md#graphics--displaynode)).
 4. Ambrosia never calls the module again, and nothing stops the device. It
@@ -80,11 +81,11 @@ the file above. Only rust-lld's output has been tried.
 
 ## The entry point
 
-Revision 1, in C:
+Revision 2, in C:
 
 ```c
 struct services {                  // offset
-    uint32_t revision;             //  0: 1
+    uint32_t revision;             //  0: 2
     uint32_t reserved;             //  4: 0
     uint64_t ecam_base;            //  8
     uint64_t ecam_size;            // 16
@@ -99,14 +100,17 @@ struct framebuffer {               // offset
     uint32_t width;                //  8
     uint32_t height;               // 12
     uint32_t stride;               // 16
-    uint32_t reserved;             // 20
+    uint32_t displays;             // 20
 };                                 // 24 bytes
 
 int32_t entry(const struct services *services, struct framebuffer *out);
 ```
 
-- `revision` is 1. A later revision only adds fields at the end of
-  `services`, so a module checks that it is at least the one it needs.
+- `revision` is 2. A later revision only adds fields at the end of
+  `services`, or gives a field that was zero a meaning in which zero means
+  what it did before, so a module checks that it is at least the one it
+  needs. Revision 2 gave `displays` its meaning, which was `reserved`, zero,
+  in revision 1. A module written for revision 1 runs unchanged.
 - `ecam_base` and `ecam_size` give the PCIe ECAM. A function's
   configuration space is 4 KiB at
   `ecam_base + (bus << 20) + (device << 15) + (function << 12)`. On
@@ -222,6 +226,16 @@ It must:
   `4 * width`. The framebuffer holds at least one character cell, 16 by 16
   pixels, and lies wholly inside the window. Ambrosia checks all of these,
   and if one fails, logs why and boots on without a console.
+- `displays` is how many displays the device drives, the framebuffer's
+  being display 0. Ambrosia zeroes `out` before the call and counts 0 as 1,
+  so a module whose device has one display can leave it alone. Ambrosia
+  adds a `/arm-io` node for each display that `Graphics` > `DisplayNode`
+  names one for, up to this many, so a configuration can name nodes for as
+  many displays as the device can have, and a device with fewer gets only
+  its own ([configuration](configuration.md#graphics--displaynode)). The
+  early console and the kernel's console use only display 0. A module sets
+  `displays` only when `revision` is 2 or later; Ambrosia before revision 2
+  never reads it.
 - Ambrosia's console draws font8x8's glyphs at twice their size, light
   grey on black: 64 columns by 48 rows at 1024 by 768. It never reads the
   framebuffer back. Long lines wrap, and at the bottom it starts again at

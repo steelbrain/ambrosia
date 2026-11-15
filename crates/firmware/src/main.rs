@@ -256,7 +256,7 @@ extern "C" fn main() -> ! {
         region: cfg::region(),
         soc_name: cfg::soc_name(),
         display: framebuffer,
-        display_node: config.display_node.clone(),
+        display_nodes: config.display_nodes.clone(),
         avp_rtc: avp_rtc(),
     };
 
@@ -349,7 +349,7 @@ fn restore_boot(
         region: cfg::region(),
         soc_name: cfg::soc_name(),
         display: None,
-        display_node: None,
+        display_nodes: alloc::vec::Vec::new(),
         avp_rtc: avp_rtc(),
     };
     // The guest's NVRAM, from the aux disk, which the restore device tree

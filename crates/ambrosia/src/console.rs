@@ -181,7 +181,7 @@ mod tests {
         width: 64,
         height: 48,
         stride: 72 * 4,
-        reserved: 0,
+        displays: 0,
     };
     const PADDING: u32 = 0x00ff_0000;
 
