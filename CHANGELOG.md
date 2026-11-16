@@ -5,7 +5,7 @@ Every release of Ambrosia, newest first. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 release's image is published with the release.
 
-## Unreleased
+## 0.1.3 - Restore boot and multiple displays
 
 - A graphics device can drive more than one display. Revision 2 of the
   graphics driver interface lets a module say how many displays its device
