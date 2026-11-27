@@ -112,6 +112,18 @@ pub struct Patch {
     pub expect: Option<u64>,
 }
 
+/// A function of the kernel collection whose callers go to a placed kext's
+/// function instead, from `Kernel` > `Redirect`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redirect {
+    /// The bundle identifier of the entry that defines `symbol`.
+    pub identifier: String,
+    /// The function's symbol in the kernel collection.
+    pub symbol: String,
+    /// The symbol, exported by a placed kext, that takes its calls.
+    pub to: String,
+}
+
 /// The graphics driver module to start, read from the bundle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Driver<'a> {
@@ -131,6 +143,8 @@ pub struct Config<'a> {
     pub kexts: Vec<Kext<'a>>,
     /// The enabled patches of `Kernel` > `Patch`, in order.
     pub patches: Vec<Patch>,
+    /// The enabled redirects of `Kernel` > `Redirect`, in order.
+    pub redirects: Vec<Redirect>,
     /// The graphics driver module `Graphics` > `Driver` names, if any.
     pub driver: Option<Driver<'a>>,
     /// The names of the displays' device tree nodes, from `Graphics` >
@@ -361,6 +375,20 @@ impl<'a> Config<'a> {
             });
         }
 
+        let redirects =
+            optional(kernel, &kernel_at, "Redirect", Value::as_array)?.unwrap_or_default();
+        for (i, e) in redirects.iter().enumerate() {
+            let at = config_at(&format!("Kernel.Redirect[{i}]."));
+            if optional(e, &at, "Enabled", Value::as_bool)? == Some(false) {
+                continue;
+            }
+            config.redirects.push(Redirect {
+                identifier: required(e, &at, "Identifier", Value::as_str)?.to_string(),
+                symbol: required(e, &at, "Symbol", Value::as_str)?.to_string(),
+                to: required(e, &at, "To", Value::as_str)?.to_string(),
+            });
+        }
+
         let graphics = optional(&root, &top, "Graphics", dict)?.unwrap_or(&empty);
         if let Some(path) = optional(graphics, &graphics_at, "Driver", Value::as_str)? {
             let elf = bundle
@@ -461,10 +489,18 @@ mod tests {
     }
 
     #[test]
-    fn reads_early_kexts() {
+    fn reads_early_kexts_and_redirects() {
         let a = config(
-            r#"<dict><key>Kernel</key><dict><key>Add</key><array>
+            r#"<dict><key>Kernel</key><dict>
+            <key>Add</key><array>
               <dict><key>BundlePath</key><string>Kexts/T.kext</string><key>Early</key><true/></dict>
+            </array>
+            <key>Redirect</key><array>
+              <dict><key>Identifier</key><string>com.apple.kernel</string>
+                <key>Symbol</key><string>_f</string><key>To</key><string>_g</string></dict>
+              <dict><key>Identifier</key><string>com.apple.kernel</string>
+                <key>Symbol</key><string>_h</string><key>To</key><string>_i</string>
+                <key>Enabled</key><false/></dict>
             </array></dict></dict>"#,
             &[
                 ("Kexts/T.kext/Contents/Info.plist", 0o100644, KEXT_INFO),
@@ -474,6 +510,14 @@ mod tests {
         let b = Bundle::parse(&a).unwrap();
         let c = Config::read(&b).unwrap();
         assert!(c.kexts[0].early);
+        assert_eq!(
+            c.redirects,
+            [Redirect {
+                identifier: "com.apple.kernel".into(),
+                symbol: "_f".into(),
+                to: "_g".into(),
+            }]
+        );
     }
 
     #[test]

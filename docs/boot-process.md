@@ -25,9 +25,10 @@ what each one took to find.
 11. [The configuration's patches](#the-configurations-patches)
 12. [Placing the kexts](#placing-the-kexts)
 13. [Placing early kexts](#placing-early-kexts)
-14. [The device tree](#the-device-tree)
-15. [The boot arguments](#the-boot-arguments)
-16. [Entering the kernel](#entering-the-kernel)
+14. [Redirects](#redirects)
+15. [The device tree](#the-device-tree)
+16. [The boot arguments](#the-boot-arguments)
+17. [Entering the kernel](#entering-the-kernel)
 
 [The log](#the-log) covers what Ambrosia prints throughout.
 
@@ -412,6 +413,16 @@ The log gives each:
 ```text
 ambrosia: Boot KC: kext <id> at <address>, <size> bytes, kmod <address>
 ```
+
+## Redirects
+
+Last, each `Kernel` > `Redirect` entry
+([configuration](configuration.md#kernel--redirect)) turns a kernel
+collection function's first 16 bytes into a jump to a placed kext's
+function at its run-time address: an early kext's slid, an Auxiliary KC
+kext's where the kernel loads that collection. The jump is
+`ldr x16, #8`, `br x16` and the address, x16 being a register a landing
+pad accepts an indirect branch from.
 
 ## The device tree
 

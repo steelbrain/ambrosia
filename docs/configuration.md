@@ -231,6 +231,36 @@ no longer fits stops the boot with a named error instead of booting
 unpatched. A patch whose `Identifier` names no entry stops the boot too,
 with `boot failed: Kernel.Patch names <id>, which is not an entry of the kernel collection`.
 
+### Kernel > Redirect
+
+An array of functions of the kernel collection whose callers go to a
+placed kext's function instead, each a dictionary:
+
+- `Identifier`, a string, required: the bundle identifier of the entry
+  that defines the function, `com.apple.kernel` for the kernel itself.
+- `Symbol`, a string, required: the function's symbol, as the kernel
+  collection's symbol tables name it, such as
+  `__ZN12ExampleClass7examineEPv`.
+- `To`, a string, required: the symbol of the function that takes its
+  calls, which a kext under `Kernel` > `Add` exports, such as
+  `_example_examine`.
+- `Enabled`, a boolean, default true. A redirect set to false is skipped.
+
+Ambrosia replaces the function's first 16 bytes with a jump to the kext's
+function at its run-time address: `ldr x16` of the address, then
+`br x16`. The kext's function takes the same arguments and returns what
+the function would; it must be ready when the function is first called,
+so a function the kernel calls before user space needs an `Early` kext.
+Each redirect logs where it jumps:
+
+```text
+ambrosia: redirect __ZN12ExampleClass7examineEPv -> _example_examine at 0xfffffe0028a59000
+```
+
+A redirect whose `Identifier` names no entry, whose `Symbol` the
+collection doesn't define, or whose `To` no placed kext exports stops the
+boot with `boot failed: Kernel.Redirect <symbol> -> <to>: <why>`.
+
 ### Kernel > ExportVtableDiscriminators
 
 An array of C++ vtable symbol strings, such as

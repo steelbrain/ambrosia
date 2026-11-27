@@ -14,6 +14,9 @@ release's image is published with the release.
   executable for its kexts; its pointers join the collection's chained
   fixups, and it gets a fileset entry and a prelink dictionary
   ([docs/configuration.md](docs/configuration.md#kernel--add)).
+- `Kernel` > `Redirect` sends a kernel collection function's callers to a
+  placed kext's function, with a jump in place of the function's first
+  instructions ([docs/configuration.md](docs/configuration.md#kernel--redirect)).
 
 ## 0.1.3 - Restore boot and multiple displays
 
