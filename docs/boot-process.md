@@ -24,9 +24,10 @@ what each one took to find.
 10. [The PAC nop pass](#the-pac-nop-pass)
 11. [The configuration's patches](#the-configurations-patches)
 12. [Placing the kexts](#placing-the-kexts)
-13. [The device tree](#the-device-tree)
-14. [The boot arguments](#the-boot-arguments)
-15. [Entering the kernel](#entering-the-kernel)
+13. [Placing early kexts](#placing-early-kexts)
+14. [The device tree](#the-device-tree)
+15. [The boot arguments](#the-boot-arguments)
+16. [Entering the kernel](#entering-the-kernel)
 
 [The log](#the-log) covers what Ambrosia prints throughout.
 
@@ -375,6 +376,41 @@ fixups, and records them in the handover:
 
 ```text
 ambrosia: vtable-disc: 2 donor vtable(s), <count> slot(s) in the handover
+```
+
+## Placing early kexts
+
+A kext marked `Early` ([`Kernel` > `Add`](configuration.md#kernel--add))
+goes in the Boot KC itself instead, before the Auxiliary KC is built
+([`bootkc.rs`](../crates/ambrosia/src/bootkc.rs)), for a driver the boot
+needs before user space. The kernel treats it as one of Apple's.
+
+- **Where it goes.** Each of its segments takes the free space at the end
+  of the Boot KC segment of the same name, past the last section of every
+  member there: the linker rounds the last member's segment up over that
+  space, so its sections, not its size, say where the used part ends. A
+  kext segment is placed by its own sections' extent too, and starts at
+  its original offset in a 4 KiB page, so the page offsets its `adrp`
+  pairs carry still hold. Its code goes in the part of `__TEXT_EXEC` the
+  kernel maps executable for its kexts (`segPLKTEXTEXEC` in XNU's
+  `arm_vm_init.c`): on a collection whose kernel code comes after the
+  kexts', as on 26.x, the space before the kernel's `__TEXT_EXEC`;
+  otherwise the space after the kernel's `__LAST`.
+- **Its pointers.** Each becomes a kernel-cache rebase at `cacheLevel` 0,
+  its target an offset from the collection's base, and joins the chain of
+  its page in the collection's chained fixups: the page's last slot is
+  linked to the kext's first, or the page starts with it if it had no
+  chain. The kernel's first pass over the collection rebases and signs
+  them with the rest.
+- **Its entries.** An `LC_FILESET_ENTRY` names it in the collection's
+  header, and a prelink dictionary with its unslid addresses goes at the
+  front of `_PrelinkInfoDictionary`.
+
+It is in the handover with the Auxiliary KC's kexts, at its slid address.
+The log gives each:
+
+```text
+ambrosia: Boot KC: kext <id> at <address>, <size> bytes, kmod <address>
 ```
 
 ## The device tree

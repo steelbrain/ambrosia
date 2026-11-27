@@ -30,7 +30,9 @@ a half minutes.
 Kexts named in the configuration are placed in an Auxiliary kernel
 collection that Ambrosia builds in memory, and the kernel starts them with
 SIP enabled. Nothing is done in the guest for it: it needs neither Reduced
-Security nor kext approval. This has been tested on 13.6 to 27.2.1.
+Security nor kext approval. This has been tested on 13.6 to 27.2.1. A
+small kext the boot needs before user space can go in the Boot KC itself
+instead.
 
 What it doesn't do:
 

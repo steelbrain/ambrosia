@@ -68,6 +68,27 @@ link-edit tables must be emptied too, or the kernel walks them through the
 kext's unplaced `__LINKEDIT` and takes a data abort (`rewrite_sub_header`
 in `place.rs`).
 
+**Put a Boot KC kext's code before the kernel's.** In a 26.x Boot KC the
+kexts' code comes first in `__TEXT_EXEC` and the kernel's own code after
+it; the kernel maps executable for its kexts only the part before its
+`__TEXT_EXEC` (`segPLKTEXTEXEC`). The free space at the segment's end is
+in the kernel's `__LAST`, which it maps non-executable once booted: code
+placed there took an instruction-fetch permission fault on its first call
+(`kext_text_exec` in `bootkc.rs`).
+
+**Measure a Boot KC member by its sections.** The linker rounds the last
+member of each Boot KC segment up to the segment's end, so its segment's
+size covers the free space and leaves no room. Its sections end where its
+contents do. A kext's own segments are whole pages too, more than the free
+space holds; it is placed by its sections' extent (`used_end` in
+`bootkc.rs`, `Segment::extent` in `kext.rs`).
+
+**Join a Boot KC page's chain, don't restart it.** A page's chained fixups
+start at one slot and run to a slot whose `next` is 0. A kext's slots in a
+page that already has a chain are linked from that last slot; a page start
+pointing at the kext's slot would drop the page's own (`join_chains` in
+`bootkc.rs`).
+
 **Re-encode `adrp` after moving segments.** Merging segments moves a
 kext's code and data to new distances from each other, so every
 page-relative `adrp` the compiler computed is off. Each segment lands on a

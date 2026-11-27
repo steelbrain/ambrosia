@@ -93,6 +93,10 @@ pub struct Segment {
     pub filesize: u64,
     /// The protection the segment starts with: read 1, write 2, execute 4.
     pub initprot: u32,
+    /// How far its contents reach from its start: to the end of its last
+    /// section, or its memory size if it has none. The linker rounds a
+    /// segment to whole pages; a placement that packs kexts takes this.
+    pub extent: u64,
 }
 
 /// One pointer the collection's chained-fixup pass would normally make right.
@@ -246,13 +250,28 @@ impl<'a> Kext<'a> {
                     }
                     let name = d.get(at + 8..at + 24).ok_or(Error::Truncated)?;
                     let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+                    let vmaddr = u64_at(d, at + 24)?;
+                    let vmsize = u64_at(d, at + 32)?;
+                    let mut extent = 0u64;
+                    for i in 0..nsects as usize {
+                        let sect = at + SEGMENT_SIZE as usize + SECTION_SIZE as usize * i;
+                        let end = u64_at(d, sect + 32)?
+                            .checked_add(u64_at(d, sect + 40)?)
+                            .ok_or(Error::Truncated)?;
+                        extent = extent.max(end.saturating_sub(vmaddr));
+                    }
                     let s = Segment {
                         name: String::from_utf8_lossy(&name[..end]).into_owned(),
-                        vmaddr: u64_at(d, at + 24)?,
-                        vmsize: u64_at(d, at + 32)?,
+                        vmaddr,
+                        vmsize,
                         fileoff: u64_at(d, at + 40)?,
                         filesize: u64_at(d, at + 48)?,
                         initprot: u32_at(d, at + 60)?,
+                        extent: if nsects == 0 {
+                            vmsize
+                        } else {
+                            extent.min(vmsize)
+                        },
                     };
                     // Placing the kext copies each segment's file bytes and
                     // reserves its memory size, so both must make sense.

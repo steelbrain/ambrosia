@@ -91,6 +91,9 @@ pub struct Kext<'a> {
     pub info: &'a [u8],
     /// Its executable, if its Info.plist names one.
     pub executable: Option<&'a [u8]>,
+    /// From `Early`: placed in the Boot KC, for a kext the kernel needs before
+    /// user space, rather than in the Auxiliary KC.
+    pub early: bool,
 }
 
 /// A patch to apply to one kernel collection entry.
@@ -330,7 +333,9 @@ impl<'a> Config<'a> {
                 continue;
             }
             let path = required(e, &at, "BundlePath", Value::as_str)?;
-            config.kexts.push(kext(bundle, path.trim_end_matches('/'))?);
+            let mut k = kext(bundle, path.trim_end_matches('/'))?;
+            k.early = optional(e, &at, "Early", Value::as_bool)?.unwrap_or(false);
+            config.kexts.push(k);
         }
 
         let patches = optional(kernel, &kernel_at, "Patch", Value::as_array)?.unwrap_or_default();
@@ -411,6 +416,7 @@ fn kext<'a>(bundle: &Bundle<'a>, path: &str) -> Result<Kext<'a>, Error> {
         id,
         info,
         executable,
+        early: false,
     })
 }
 
@@ -452,6 +458,22 @@ mod tests {
         let mut m: Vec<(&str, u32, &[u8])> = vec![("config.plist", 0o100644, text.as_bytes())];
         m.extend_from_slice(extra);
         archive(&m)
+    }
+
+    #[test]
+    fn reads_early_kexts() {
+        let a = config(
+            r#"<dict><key>Kernel</key><dict><key>Add</key><array>
+              <dict><key>BundlePath</key><string>Kexts/T.kext</string><key>Early</key><true/></dict>
+            </array></dict></dict>"#,
+            &[
+                ("Kexts/T.kext/Contents/Info.plist", 0o100644, KEXT_INFO),
+                ("Kexts/T.kext/Contents/MacOS/T", 0o100755, b"MACHO"),
+            ],
+        );
+        let b = Bundle::parse(&a).unwrap();
+        let c = Config::read(&b).unwrap();
+        assert!(c.kexts[0].early);
     }
 
     #[test]

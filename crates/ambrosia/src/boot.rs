@@ -32,6 +32,7 @@ use crate::macho::{self, Header};
 use crate::pac;
 use crate::sha384::Sha384;
 use crate::tree::{self, Machine, Objects, PlacedKext, Placement};
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -456,9 +457,24 @@ pub fn prepare(
     // placed below the Boot KC so its lowest segment lies below the Boot KC's
     // (the two guard panics in arm_vm_init). Reserve page-aligned room for the
     // whole collection in the block below it, under the trust caches.
+    // Kexts marked Early go in the Boot KC (bootkc.rs), the rest in the
+    // Auxiliary KC.
+    let early_kexts: Vec<crate::auxkc::KextInput<'_>> = config
+        .kexts
+        .iter()
+        .filter(|k| k.early)
+        .filter_map(|k| {
+            k.executable.map(|e| crate::auxkc::KextInput {
+                id: k.id.as_str(),
+                info: k.info,
+                exe: e,
+            })
+        })
+        .collect();
     let aux_kexts: Vec<crate::auxkc::KextInput<'_>> = config
         .kexts
         .iter()
+        .filter(|k| !k.early)
         .filter_map(|k| {
             k.executable.map(|e| crate::auxkc::KextInput {
                 id: k.id.as_str(),
@@ -637,15 +653,25 @@ pub fn prepare(
     // kext landed. This is the last read of the Boot KC in `kc`, so the borrow
     // ends here and the AuxKC can be written to RAM below.
     let aux_va = aux_at - phys_base + virt_base;
-    let (aux_image, placed): (Option<Vec<u8>>, Vec<PlacedKext<'_>>) = if aux_kexts.is_empty() {
+    let symbols = if early_kexts.is_empty() && aux_kexts.is_empty() {
+        BTreeMap::new()
+    } else {
+        Header::parse(kc)
+            .map_err(Error::Kernel)?
+            .all_symbols(kc)
+            .map_err(Error::Kernel)?
+    };
+    // The early kexts, placed in the Boot KC itself, unslid.
+    let (early_placed, _) = if early_kexts.is_empty() {
+        (Vec::new(), BTreeMap::new())
+    } else {
+        crate::bootkc::inject(kc, lo, &early_kexts, &symbols, log)?
+    };
+    let (aux_image, mut placed): (Option<Vec<u8>>, Vec<PlacedKext<'_>>) = if aux_kexts.is_empty() {
         (None, Vec::new())
     } else {
         let boot_uuid = crate::auxkc::boot_kc_uuid(kc)
             .ok_or(Error::Place("the kernel collection has no LC_UUID"))?;
-        let symbols = Header::parse(kc)
-            .map_err(Error::Kernel)?
-            .all_symbols(kc)
-            .map_err(Error::Kernel)?;
         let aux = crate::auxkc::build(&aux_kexts, aux_va, lo, &boot_uuid, &symbols, log)?;
         // The handover: each placed kext's slid sub-header address and the span
         // of its segments, read from the AuxKC's fileset entry. The kernel loads
@@ -684,6 +710,14 @@ pub fn prepare(
         ));
         (Some(aux), placed)
     };
+    // The early kexts in the handover too, at their slid headers.
+    for (p, ki) in early_placed.iter().zip(&early_kexts) {
+        placed.push(PlacedKext {
+            id: ki.id,
+            base: p.base + slide,
+            size: p.size,
+        });
+    }
     if let Some(aux) = &aux_image {
         // The collection must fit the room reserved for it from `size`, or it
         // would overrun up into the trust caches and the Boot KC placed just

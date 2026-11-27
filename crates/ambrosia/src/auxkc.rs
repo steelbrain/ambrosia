@@ -118,7 +118,7 @@ const FIXUP_OUTSIDE: KextError =
 /// The top-level collection segment a kext segment is coalesced into, or `None`
 /// for a segment Ambrosia does not place. `__OBJC_CONST` rides in
 /// `__DATA_CONST`.
-fn collseg_name(name: &str) -> Option<&'static str> {
+pub(crate) fn collseg_name(name: &str) -> Option<&'static str> {
     match name {
         "__TEXT" => Some("__TEXT"),
         "__TEXT_EXEC" => Some("__TEXT_EXEC"),
@@ -130,7 +130,7 @@ fn collseg_name(name: &str) -> Option<&'static str> {
 
 /// The segments of `k` the collection holds: those with contents, but
 /// `__LINKEDIT`, in load-command order.
-fn mapped<'k>(k: &'k kext::Kext<'_>) -> impl Iterator<Item = &'k kext::Segment> {
+pub(crate) fn mapped<'k>(k: &'k kext::Kext<'_>) -> impl Iterator<Item = &'k kext::Segment> {
     k.segments
         .iter()
         .filter(|s| s.filesize > 0 && s.name != "__LINKEDIT")
@@ -140,7 +140,7 @@ fn mapped<'k>(k: &'k kext::Kext<'_>) -> impl Iterator<Item = &'k kext::Segment> 
 /// [`size`] and [`build`] both do: its mapped segments start with the one at
 /// file offset 0, which holds its mach header, each is one the collection
 /// holds, and the `kmod_info` fields placing it writes lie in one of them.
-fn parse<'a>(ki: &KextInput<'a>) -> Result<kext::Kext<'a>, Error> {
+pub(crate) fn parse<'a>(ki: &KextInput<'a>) -> Result<kext::Kext<'a>, Error> {
     let k = kext::Kext::parse(ki.exe).map_err(|e| kext_error(ki.id, KextError::Exe(e)))?;
     if mapped(&k).next().is_none_or(|s| s.fileoff != 0) {
         return Err(kext_error(
@@ -251,7 +251,14 @@ const KC_LEVEL_AUX: u64 = 3;
 /// Encodes one `dyld_chained_ptr_64_kernel_cache_rebase` word, less its `next`
 /// field: `target`:30 (the offset the kernel adds to `basePointers[level]`),
 /// `cacheLevel`:2, `diversity`:16, `addrDiv`:1, `key`:2, `next`:12, `isAuth`:1.
-fn kc_word(target: u64, level: u64, auth: bool, key: u8, addr_div: bool, diversity: u16) -> u64 {
+pub(crate) fn kc_word(
+    target: u64,
+    level: u64,
+    auth: bool,
+    key: u8,
+    addr_div: bool,
+    diversity: u16,
+) -> u64 {
     (target & 0x3fff_ffff)
         | (level << 30)
         | (u64::from(diversity) << 32)
@@ -273,6 +280,7 @@ fn bind_target(
     symbols: &BTreeMap<String, u64>,
     exports: &BTreeMap<String, u64>,
     boot_lo: u64,
+    sibling_level: u64,
 ) -> Result<(u64, u64), KextError> {
     if let Some(&unslid) = symbols.get(name) {
         let off = unslid.checked_sub(boot_lo).ok_or(KextError::Place(
@@ -290,7 +298,7 @@ fn bind_target(
                 "a symbol it imports from another kext is 1 GiB or more into the Auxiliary KC",
             ));
         }
-        Ok((target, KC_LEVEL_AUX))
+        Ok((target, sibling_level))
     } else {
         Err(KextError::NoSymbol(name.into()))
     }
@@ -306,6 +314,7 @@ fn bind_word(
     exports: &BTreeMap<String, u64>,
     ordinal: u32,
     boot_lo: u64,
+    own: Own,
     auth: bool,
     key: u8,
     addr_div: bool,
@@ -314,7 +323,7 @@ fn bind_word(
     let name = k.imports.get(ordinal as usize).ok_or(KextError::Place(
         "a chained fixup binds an import it doesn't have",
     ))?;
-    let (target, level) = bind_target(name, symbols, exports, boot_lo)?;
+    let (target, level) = bind_target(name, symbols, exports, boot_lo, own.level)?;
     Ok(kc_word(target, level, auth, key, addr_div, diversity))
 }
 
@@ -326,14 +335,32 @@ struct Chain {
     slots: Vec<(u64, u64)>,
 }
 
+/// Where a kext's own pointers (and its sibling kexts' exports) point, as a
+/// kernel-cache word names it: the `cacheLevel` and the address its `target`
+/// counts from. The Auxiliary KC's are level 3 from 0 (it is linked at zero);
+/// a kext placed in the Boot KC's are level 0 from the Boot KC's base.
+#[derive(Clone, Copy)]
+pub(crate) struct Own {
+    pub(crate) level: u64,
+    pub(crate) base: u64,
+}
+
+/// The Auxiliary KC's own pointers.
+const OWN_AUX: Own = Own {
+    level: KC_LEVEL_AUX,
+    base: 0,
+};
+
 /// One kext's fixups, as (slot's collection file offset, word without
-/// `next`), for [`build_chain`].
-fn kext_fixups(
+/// `next`), for [`build_chain`]. `exports` gives sibling kexts' exports as
+/// targets counted from `own.base`.
+pub(crate) fn kext_fixups(
     p: &Placement,
     k: &kext::Kext<'_>,
     symbols: &BTreeMap<String, u64>,
     exports: &BTreeMap<String, u64>,
     boot_lo: u64,
+    own: Own,
 ) -> Result<Vec<(u64, u64)>, KextError> {
     let mut fx = Vec::with_capacity(k.fixups.len());
     for f in &k.fixups {
@@ -341,7 +368,7 @@ fn kext_fixups(
         let word = match f.kind {
             kext::Kind::Rebase { target } => {
                 let t = place_off(p, target).ok_or(FIXUP_OUTSIDE)?.0;
-                kc_word(t, KC_LEVEL_AUX, false, 0, false, 0)
+                kc_word(own_target(t, own)?, own.level, false, 0, false, 0)
             }
             kext::Kind::AuthRebase {
                 target,
@@ -350,23 +377,40 @@ fn kext_fixups(
                 diversity,
             } => {
                 let t = place_off(p, target).ok_or(FIXUP_OUTSIDE)?.0;
-                kc_word(t, KC_LEVEL_AUX, true, key, addr_div, diversity)
+                kc_word(
+                    own_target(t, own)?,
+                    own.level,
+                    true,
+                    key,
+                    addr_div,
+                    diversity,
+                )
             }
-            kext::Kind::Bind { ordinal } => {
-                bind_word(k, symbols, exports, ordinal, boot_lo, false, 0, false, 0)?
-            }
+            kext::Kind::Bind { ordinal } => bind_word(
+                k, symbols, exports, ordinal, boot_lo, own, false, 0, false, 0,
+            )?,
             kext::Kind::AuthBind {
                 ordinal,
                 key,
                 addr_div,
                 diversity,
             } => bind_word(
-                k, symbols, exports, ordinal, boot_lo, true, key, addr_div, diversity,
+                k, symbols, exports, ordinal, boot_lo, own, true, key, addr_div, diversity,
             )?,
         };
         fx.push((pos, word));
     }
     Ok(fx)
+}
+
+/// A placed address as a kernel-cache `target`: its offset from `own.base`,
+/// which must fit the word's 30 bits.
+fn own_target(va: u64, own: Own) -> Result<u64, KextError> {
+    va.checked_sub(own.base)
+        .filter(|&t| t < (1 << 30))
+        .ok_or(KextError::Place(
+            "a pointer of it is not within 1 GiB above its kernel collection's base",
+        ))
 }
 
 /// Builds the collection's chained-fixups table (`LC_DYLD_CHAINED_FIXUPS`
@@ -393,7 +437,9 @@ fn build_chain(
     // Every kext fixup as (slot's collection file offset, word without `next`).
     let mut fx: Vec<(u64, u64)> = Vec::new();
     for &(id, p, k) in kexts {
-        fx.extend(kext_fixups(p, k, symbols, exports, boot_lo).map_err(|e| kext_error(id, e))?);
+        fx.extend(
+            kext_fixups(p, k, symbols, exports, boot_lo, OWN_AUX).map_err(|e| kext_error(id, e))?,
+        );
     }
     fx.sort_unstable_by_key(|&(pos, _)| pos);
 
@@ -508,6 +554,19 @@ pub fn build(
     symbols: &BTreeMap<String, u64>,
     log: &mut dyn FnMut(fmt::Arguments<'_>),
 ) -> Result<Vec<u8>, Error> {
+    build_with_exports(kexts, slide, boot_lo, boot_uuid, symbols, log).map(|(image, _)| image)
+}
+
+/// [`build`], also giving each placed kext's defined-external symbols at their
+/// addresses in the collection (offsets from its start).
+pub fn build_with_exports(
+    kexts: &[KextInput<'_>],
+    slide: u64,
+    boot_lo: u64,
+    boot_uuid: &[u8; 16],
+    symbols: &BTreeMap<String, u64>,
+    log: &mut dyn FnMut(fmt::Arguments<'_>),
+) -> Result<(Vec<u8>, BTreeMap<String, u64>), Error> {
     if kexts.is_empty() {
         return Err(Error::Place("no kexts to place"));
     }
@@ -841,7 +900,7 @@ pub fn build(
             pk.p.kmod_addr,
         ));
     }
-    Ok(new)
+    Ok((new, exports))
 }
 
 #[cfg(test)]
@@ -866,34 +925,34 @@ mod tests {
 
         // Boot-KC symbol -> (offset from boot_lo, level 0).
         assert_eq!(
-            bind_target("_IOLog", &symbols, &exports, boot_lo).unwrap(),
+            bind_target("_IOLog", &symbols, &exports, boot_lo, KC_LEVEL_AUX).unwrap(),
             (0x1234, KC_LEVEL_BOOT)
         );
         // Sibling export -> (collection address, level 3).
         assert_eq!(
-            bind_target(export, &symbols, &exports, boot_lo).unwrap(),
+            bind_target(export, &symbols, &exports, boot_lo, KC_LEVEL_AUX).unwrap(),
             (0x8764, KC_LEVEL_AUX)
         );
         // Boot KC wins a name collision.
         assert_eq!(
-            bind_target("_shared", &symbols, &exports, boot_lo).unwrap(),
+            bind_target("_shared", &symbols, &exports, boot_lo, KC_LEVEL_AUX).unwrap(),
             (0x40, KC_LEVEL_BOOT)
         );
         // Neither has it.
         assert!(matches!(
-            bind_target("_missing", &symbols, &exports, boot_lo),
+            bind_target("_missing", &symbols, &exports, boot_lo, KC_LEVEL_AUX),
             Err(KextError::NoSymbol(_))
         ));
         // A kernel symbol below the Boot KC base is rejected, not wrapped.
         symbols.insert("_below".to_string(), boot_lo - 8);
         assert!(matches!(
-            bind_target("_below", &symbols, &exports, boot_lo),
+            bind_target("_below", &symbols, &exports, boot_lo, KC_LEVEL_AUX),
             Err(KextError::Place(_))
         ));
         // Targets must fit the 30-bit kernel-cache target field.
         exports.insert("_far".to_string(), 1 << 30);
         assert!(matches!(
-            bind_target("_far", &symbols, &exports, boot_lo),
+            bind_target("_far", &symbols, &exports, boot_lo, KC_LEVEL_AUX),
             Err(KextError::Place(_))
         ));
     }
