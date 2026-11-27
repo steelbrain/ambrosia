@@ -119,10 +119,12 @@ An array of kexts to add, each a dictionary:
   bundle must hold `Contents/Info.plist` there, an XML property list with a
   `CFBundleIdentifier`. If the Info.plist names a `CFBundleExecutable`, the
   bundle must hold `Contents/MacOS/<name>` too.
+- `Early`, a boolean, default false: place the kext in the Boot KC itself
+  rather than in the Auxiliary KC (below).
 - `Enabled`, a boolean, default true. An entry set to false is skipped.
 
-Ambrosia places every enabled kext that has an executable in one Auxiliary
-kernel collection that it builds in memory, and the kernel loads it and
+Ambrosia places every enabled kext that has an executable and isn't
+`Early` in one Auxiliary kernel collection that it builds in memory, and the kernel loads it and
 starts the kexts with SIP on and nothing done in the guest. No kext
 signature or trust-cache entry is needed: the guest runs with developer
 mode force-enabled, as the `vmapple` machine reports it. A placed kext's
@@ -136,7 +138,21 @@ segment must come first in the file, and its other segments with contents,
 but `__LINKEDIT`, must be `__TEXT_EXEC`, `__DATA_CONST`, `__OBJC_CONST` or
 `__DATA`.
 A kext built against the macOS SDK's Kernel.framework, with no KDK, can
-meet all of this. [Adding a kext](how-to/add-a-kext.md) walks through
+meet all of this.
+
+The kernel loads the Auxiliary KC only once early user space runs. A kext
+the boot needs before then, such as one a volume's mount waits on, is
+`Early`: Ambrosia places it in the Boot KC, as kcgen places Apple's kexts,
+and the kernel knows it from its first moments. Its segments go in the
+free space the Boot KC's own segments end with, so it must be small:
+about 12 KiB of each of `__TEXT`, `__TEXT_EXEC` and `__DATA_CONST` on the
+26.x collections tested, and less of `__DATA`. A kext that doesn't fit
+stops the boot with
+`boot failed: kext <id>: the Boot KC has no room left for it in a segment`.
+It gets a fileset entry and a prelink dictionary like any Boot KC kext,
+so its personalities match as Apple's do, and its pointers are rebased
+and signed by the kernel's first pass over the collection's chained
+fixups ([the boot process](boot-process.md#placing-early-kexts)). [Adding a kext](how-to/add-a-kext.md) walks through
 building one, and
 [`examples/hello-kext`](../examples/hello-kext/README.md) is a minimal kext
 to start from.
@@ -214,6 +230,36 @@ Set `Expect` for a patch that must land, so a kernel collection the patch
 no longer fits stops the boot with a named error instead of booting
 unpatched. A patch whose `Identifier` names no entry stops the boot too,
 with `boot failed: Kernel.Patch names <id>, which is not an entry of the kernel collection`.
+
+### Kernel > Redirect
+
+An array of functions of the kernel collection whose callers go to a
+placed kext's function instead, each a dictionary:
+
+- `Identifier`, a string, required: the bundle identifier of the entry
+  that defines the function, `com.apple.kernel` for the kernel itself.
+- `Symbol`, a string, required: the function's symbol, as the kernel
+  collection's symbol tables name it, such as
+  `__ZN12ExampleClass7examineEPv`.
+- `To`, a string, required: the symbol of the function that takes its
+  calls, which a kext under `Kernel` > `Add` exports, such as
+  `_example_examine`.
+- `Enabled`, a boolean, default true. A redirect set to false is skipped.
+
+Ambrosia replaces the function's first 16 bytes with a jump to the kext's
+function at its run-time address: `ldr x16` of the address, then
+`br x16`. The kext's function takes the same arguments and returns what
+the function would; it must be ready when the function is first called,
+so a function the kernel calls before user space needs an `Early` kext.
+Each redirect logs where it jumps:
+
+```text
+ambrosia: redirect __ZN12ExampleClass7examineEPv -> _example_examine at 0xfffffe0028a59000
+```
+
+A redirect whose `Identifier` names no entry, whose `Symbol` the
+collection doesn't define, or whose `To` no placed kext exports stops the
+boot with `boot failed: Kernel.Redirect <symbol> -> <to>: <why>`.
 
 ### Kernel > ExportVtableDiscriminators
 

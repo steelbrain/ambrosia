@@ -32,6 +32,7 @@ use crate::macho::{self, Header};
 use crate::pac;
 use crate::sha384::Sha384;
 use crate::tree::{self, Machine, Objects, PlacedKext, Placement};
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -113,6 +114,8 @@ pub enum Error {
         /// The number of matches it did replace.
         done: u64,
     },
+    /// A redirect can't be made; the string says which and why.
+    Redirect(String),
     /// A kext the configuration names can't be placed: its bundle
     /// identifier, and why.
     Kext(String, KextError),
@@ -161,6 +164,7 @@ impl fmt::Display for Error {
                  don't fit in its 16 KiB header",
             ),
             Error::Place(what) => write!(f, "can't build the Auxiliary KC: {what}"),
+            Error::Redirect(what) => write!(f, "Kernel.Redirect {what}"),
             Error::NoPrelinkArray => f.write_str(
                 "the prelink info has no _PrelinkInfoDictionary array to add the kexts to",
             ),
@@ -456,9 +460,24 @@ pub fn prepare(
     // placed below the Boot KC so its lowest segment lies below the Boot KC's
     // (the two guard panics in arm_vm_init). Reserve page-aligned room for the
     // whole collection in the block below it, under the trust caches.
+    // Kexts marked Early go in the Boot KC (bootkc.rs), the rest in the
+    // Auxiliary KC.
+    let early_kexts: Vec<crate::auxkc::KextInput<'_>> = config
+        .kexts
+        .iter()
+        .filter(|k| k.early)
+        .filter_map(|k| {
+            k.executable.map(|e| crate::auxkc::KextInput {
+                id: k.id.as_str(),
+                info: k.info,
+                exe: e,
+            })
+        })
+        .collect();
     let aux_kexts: Vec<crate::auxkc::KextInput<'_>> = config
         .kexts
         .iter()
+        .filter(|k| !k.early)
         .filter_map(|k| {
             k.executable.map(|e| crate::auxkc::KextInput {
                 id: k.id.as_str(),
@@ -637,16 +656,29 @@ pub fn prepare(
     // kext landed. This is the last read of the Boot KC in `kc`, so the borrow
     // ends here and the AuxKC can be written to RAM below.
     let aux_va = aux_at - phys_base + virt_base;
-    let (aux_image, placed): (Option<Vec<u8>>, Vec<PlacedKext<'_>>) = if aux_kexts.is_empty() {
+    let symbols = if early_kexts.is_empty() && aux_kexts.is_empty() {
+        BTreeMap::new()
+    } else {
+        Header::parse(kc)
+            .map_err(Error::Kernel)?
+            .all_symbols(kc)
+            .map_err(Error::Kernel)?
+    };
+    // The early kexts, placed in the Boot KC itself, unslid.
+    let (early_placed, early_exports) = if early_kexts.is_empty() {
+        (Vec::new(), BTreeMap::new())
+    } else {
+        crate::bootkc::inject(kc, lo, &early_kexts, &symbols, log)?
+    };
+    let mut aux_exports: BTreeMap<String, u64> = BTreeMap::new();
+    let (aux_image, mut placed): (Option<Vec<u8>>, Vec<PlacedKext<'_>>) = if aux_kexts.is_empty() {
         (None, Vec::new())
     } else {
         let boot_uuid = crate::auxkc::boot_kc_uuid(kc)
             .ok_or(Error::Place("the kernel collection has no LC_UUID"))?;
-        let symbols = Header::parse(kc)
-            .map_err(Error::Kernel)?
-            .all_symbols(kc)
-            .map_err(Error::Kernel)?;
-        let aux = crate::auxkc::build(&aux_kexts, aux_va, lo, &boot_uuid, &symbols, log)?;
+        let (aux, exports) =
+            crate::auxkc::build_with_exports(&aux_kexts, aux_va, lo, &boot_uuid, &symbols, log)?;
+        aux_exports = exports;
         // The handover: each placed kext's slid sub-header address and the span
         // of its segments, read from the AuxKC's fileset entry. The kernel loads
         // the AuxKC at aux_va, so a kext's runtime header is aux_va plus its
@@ -684,6 +716,45 @@ pub fn prepare(
         ));
         (Some(aux), placed)
     };
+    // The early kexts in the handover too, at their slid headers.
+    for (p, ki) in early_placed.iter().zip(&early_kexts) {
+        placed.push(PlacedKext {
+            id: ki.id,
+            base: p.base + slide,
+            size: p.size,
+        });
+    }
+
+    // The configuration's redirects: each function's first instructions
+    // become a jump to a placed kext's function at its runtime address, an
+    // early kext's slid, an AuxKC kext's where the kernel loads the AuxKC.
+    // x16 is the register a landing pad accepts an indirect branch from.
+    for r in &config.redirects {
+        if !h.entries.iter().any(|e| e.id == r.identifier) {
+            return Err(Error::NoEntry(r.identifier.clone()));
+        }
+        let missing =
+            |what: &str| Error::Redirect(alloc::format!("{} -> {}: {what}", r.symbol, r.to));
+        let from = *symbols
+            .get(&r.symbol)
+            .ok_or_else(|| missing("the kernel collection doesn't define the symbol"))?;
+        let to = early_exports
+            .get(&r.to)
+            .map(|va| va + slide)
+            .or_else(|| aux_exports.get(&r.to).map(|o| aux_va + o))
+            .ok_or_else(|| missing("no placed kext exports the target"))?;
+        let at = from
+            .checked_sub(lo)
+            .map(|a| a as usize)
+            .ok_or_else(|| missing("the symbol is below the collection"))?;
+        let stub = kc
+            .get_mut(at..at + 16)
+            .ok_or_else(|| missing("the symbol is past the collection"))?;
+        stub[0..4].copy_from_slice(&0x5800_0050u32.to_le_bytes()); // ldr x16, #8
+        stub[4..8].copy_from_slice(&0xd61f_0200u32.to_le_bytes()); // br x16
+        stub[8..16].copy_from_slice(&to.to_le_bytes());
+        log(format_args!("redirect {} -> {} at {to:#x}", r.symbol, r.to));
+    }
     if let Some(aux) = &aux_image {
         // The collection must fit the room reserved for it from `size`, or it
         // would overrun up into the trust caches and the Boot KC placed just

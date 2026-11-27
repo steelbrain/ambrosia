@@ -17,6 +17,7 @@ pub mod auxkc;
 pub mod block;
 pub mod boot;
 pub mod bootargs;
+pub mod bootkc;
 pub mod bundle;
 pub mod config;
 pub mod console;

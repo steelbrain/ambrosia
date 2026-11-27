@@ -91,6 +91,9 @@ pub struct Kext<'a> {
     pub info: &'a [u8],
     /// Its executable, if its Info.plist names one.
     pub executable: Option<&'a [u8]>,
+    /// From `Early`: placed in the Boot KC, for a kext the kernel needs before
+    /// user space, rather than in the Auxiliary KC.
+    pub early: bool,
 }
 
 /// A patch to apply to one kernel collection entry.
@@ -107,6 +110,18 @@ pub struct Patch {
     /// The number of matches the patch must replace, or the boot stops:
     /// `None`, with no `Expect` key, replaces what it finds and never stops.
     pub expect: Option<u64>,
+}
+
+/// A function of the kernel collection whose callers go to a placed kext's
+/// function instead, from `Kernel` > `Redirect`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redirect {
+    /// The bundle identifier of the entry that defines `symbol`.
+    pub identifier: String,
+    /// The function's symbol in the kernel collection.
+    pub symbol: String,
+    /// The symbol, exported by a placed kext, that takes its calls.
+    pub to: String,
 }
 
 /// The graphics driver module to start, read from the bundle.
@@ -128,6 +143,8 @@ pub struct Config<'a> {
     pub kexts: Vec<Kext<'a>>,
     /// The enabled patches of `Kernel` > `Patch`, in order.
     pub patches: Vec<Patch>,
+    /// The enabled redirects of `Kernel` > `Redirect`, in order.
+    pub redirects: Vec<Redirect>,
     /// The graphics driver module `Graphics` > `Driver` names, if any.
     pub driver: Option<Driver<'a>>,
     /// The names of the displays' device tree nodes, from `Graphics` >
@@ -330,7 +347,9 @@ impl<'a> Config<'a> {
                 continue;
             }
             let path = required(e, &at, "BundlePath", Value::as_str)?;
-            config.kexts.push(kext(bundle, path.trim_end_matches('/'))?);
+            let mut k = kext(bundle, path.trim_end_matches('/'))?;
+            k.early = optional(e, &at, "Early", Value::as_bool)?.unwrap_or(false);
+            config.kexts.push(k);
         }
 
         let patches = optional(kernel, &kernel_at, "Patch", Value::as_array)?.unwrap_or_default();
@@ -353,6 +372,20 @@ impl<'a> Config<'a> {
                 replace,
                 count,
                 expect,
+            });
+        }
+
+        let redirects =
+            optional(kernel, &kernel_at, "Redirect", Value::as_array)?.unwrap_or_default();
+        for (i, e) in redirects.iter().enumerate() {
+            let at = config_at(&format!("Kernel.Redirect[{i}]."));
+            if optional(e, &at, "Enabled", Value::as_bool)? == Some(false) {
+                continue;
+            }
+            config.redirects.push(Redirect {
+                identifier: required(e, &at, "Identifier", Value::as_str)?.to_string(),
+                symbol: required(e, &at, "Symbol", Value::as_str)?.to_string(),
+                to: required(e, &at, "To", Value::as_str)?.to_string(),
             });
         }
 
@@ -411,6 +444,7 @@ fn kext<'a>(bundle: &Bundle<'a>, path: &str) -> Result<Kext<'a>, Error> {
         id,
         info,
         executable,
+        early: false,
     })
 }
 
@@ -452,6 +486,38 @@ mod tests {
         let mut m: Vec<(&str, u32, &[u8])> = vec![("config.plist", 0o100644, text.as_bytes())];
         m.extend_from_slice(extra);
         archive(&m)
+    }
+
+    #[test]
+    fn reads_early_kexts_and_redirects() {
+        let a = config(
+            r#"<dict><key>Kernel</key><dict>
+            <key>Add</key><array>
+              <dict><key>BundlePath</key><string>Kexts/T.kext</string><key>Early</key><true/></dict>
+            </array>
+            <key>Redirect</key><array>
+              <dict><key>Identifier</key><string>com.apple.kernel</string>
+                <key>Symbol</key><string>_f</string><key>To</key><string>_g</string></dict>
+              <dict><key>Identifier</key><string>com.apple.kernel</string>
+                <key>Symbol</key><string>_h</string><key>To</key><string>_i</string>
+                <key>Enabled</key><false/></dict>
+            </array></dict></dict>"#,
+            &[
+                ("Kexts/T.kext/Contents/Info.plist", 0o100644, KEXT_INFO),
+                ("Kexts/T.kext/Contents/MacOS/T", 0o100755, b"MACHO"),
+            ],
+        );
+        let b = Bundle::parse(&a).unwrap();
+        let c = Config::read(&b).unwrap();
+        assert!(c.kexts[0].early);
+        assert_eq!(
+            c.redirects,
+            [Redirect {
+                identifier: "com.apple.kernel".into(),
+                symbol: "_f".into(),
+                to: "_g".into(),
+            }]
+        );
     }
 
     #[test]

@@ -5,6 +5,19 @@ Every release of Ambrosia, newest first. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 release's image is published with the release.
 
+## Unreleased
+
+- A kext under `Kernel` > `Add` marked `Early` goes in the Boot KC itself,
+  as kcgen places Apple's kexts, for a driver the boot needs before user
+  space loads the Auxiliary KC. Its segments take the free space the Boot
+  KC's segments end with, its code within the range the kernel maps
+  executable for its kexts; its pointers join the collection's chained
+  fixups, and it gets a fileset entry and a prelink dictionary
+  ([docs/configuration.md](docs/configuration.md#kernel--add)).
+- `Kernel` > `Redirect` sends a kernel collection function's callers to a
+  placed kext's function, with a jump in place of the function's first
+  instructions ([docs/configuration.md](docs/configuration.md#kernel--redirect)).
+
 ## 0.1.3 - Restore boot and multiple displays
 
 - A graphics device can drive more than one display. Revision 2 of the
